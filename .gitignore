@@ -1,0 +1,8 @@
+/target/
+/.cache/
+/artifacts/*.csv
+/artifacts/*.json
+*.tmp
+*.log
+/dist/
+

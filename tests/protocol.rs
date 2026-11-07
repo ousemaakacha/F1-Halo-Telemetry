@@ -1,0 +1,348 @@
+use f1_halo_telemetry::{
+    settings::*,
+    telemetry::{state::*, *},
+};
+use std::time::{Duration, Instant};
+
+fn wire(id: u8, player: u8, frame: u32) -> Vec<u8> {
+    let size = match id {
+        1 => 926,
+        2 => 1399,
+        3 => 45,
+        4 => 1470,
+        6 => 1448,
+        7 => 1445,
+        10 => 1133,
+        16 => 269,
+        _ => 29,
+    };
+    let mut b = vec![0; size];
+    b[0..2].copy_from_slice(&2026u16.to_le_bytes());
+    b[2] = 25;
+    b[5] = 1;
+    b[6] = id;
+    b[7..15].copy_from_slice(&42u64.to_le_bytes());
+    b[15..19].copy_from_slice(&(frame as f32 / 60.0).to_le_bytes());
+    b[19..23].copy_from_slice(&frame.to_le_bytes());
+    b[23..27].copy_from_slice(&frame.to_le_bytes());
+    b[27] = player;
+    b[28] = 255;
+    b
+}
+
+#[test]
+fn reads_independent_last_car_fixture_with_exact_2026_offsets() {
+    let mut b = wire(6, 23, 600);
+    let o = 29 + 59 * 23;
+    b[o..o + 2].copy_from_slice(&327u16.to_le_bytes());
+    b[o + 2..o + 6].copy_from_slice(&0.75f32.to_le_bytes());
+    b[o + 10..o + 14].copy_from_slice(&0.25f32.to_le_bytes());
+    b[o + 15] = 255;
+    b[o + 16..o + 18].copy_from_slice(&11800u16.to_le_bytes());
+    b[o + 20..o + 22].copy_from_slice(&0x4001u16.to_le_bytes());
+    b[o + 30..o + 34].copy_from_slice(&[91, 92, 93, 94]);
+    b[o + 34..o + 38].copy_from_slice(&[81, 82, 83, 84]);
+    let Packet::Telemetry(h, c) = parse(&b).unwrap() else {
+        panic!()
+    };
+    assert_eq!((h.player, h.session_uid, h.overall_frame), (23, 42, 600));
+    assert_eq!(
+        (c.speed_kmh, c.gear, c.rpm, c.rev_bits),
+        (327, -1, 11800, 0x4001)
+    );
+    assert_eq!((c.throttle, c.brake), (0.75, 0.25));
+    assert_eq!(c.surface_c, [91, 92, 93, 94]);
+    assert_eq!(c.inner_c, [81, 82, 83, 84]);
+}
+
+#[test]
+fn status_offsets_include_new_harvest_limit() {
+    let mut b = wire(7, 23, 99);
+    let o = 29 + 59 * 23;
+    b[o + 17..o + 19].copy_from_slice(&15000u16.to_le_bytes());
+    b[o + 37..o + 41].copy_from_slice(&2_000_000f32.to_le_bytes());
+    b[o + 41] = 3;
+    b[o + 50..o + 54].copy_from_slice(&8_500_000f32.to_le_bytes());
+    let Packet::Status(_, s) = parse(&b).unwrap() else {
+        panic!()
+    };
+    assert_eq!(s.max_rpm, 15000);
+    assert_eq!(s.ers_joules, 2_000_000.0);
+    assert_eq!(s.harvest_limit_joules, 8_500_000.0);
+    assert_eq!(s.deploy_mode, 3);
+}
+
+#[test]
+fn aero_is_independent_of_legacy_drs() {
+    let mut b = wire(16, 23, 20);
+    let o = 29 + 10 * 23;
+    b[o] = 1;
+    b[o + 1] = 1;
+    b[o + 4] = 1;
+    b[o + 5] = 1;
+    b[o + 8] = 1;
+    b[o + 6..o + 8].copy_from_slice(&123u16.to_le_bytes());
+    let Packet::Aero(_, a) = parse(&b).unwrap() else {
+        panic!()
+    };
+    assert!(
+        a.straight
+            && a.available
+            && a.overtake_active
+            && a.overtake_available
+            && a.regulations_2026
+    );
+    assert_eq!(a.overtake_distance_m, 123);
+}
+
+#[test]
+fn damage_wear_is_not_remaining_life() {
+    let mut b = wire(10, 0, 1);
+    for (i, wear) in [0f32, 25.0, 50.0, 100.0].iter().enumerate() {
+        b[29 + i * 4..33 + i * 4].copy_from_slice(&wear.to_le_bytes());
+    }
+    let Packet::Damage(_, d) = parse(&b).unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.wear, [0.0, 25.0, 50.0, 100.0]);
+}
+
+#[test]
+fn wheel_mapping_front_then_rear_is_explicit() {
+    let wire = [11, 22, 33, 44];
+    assert_eq!(
+        Wheel::VISUAL_ORDER.map(|w| wire[w as usize]),
+        [33, 44, 11, 22]
+    );
+    assert_eq!(
+        Wheel::VISUAL_ORDER.map(Wheel::label),
+        ["FL", "FR", "RL", "RR"]
+    );
+}
+
+#[test]
+fn conversions_and_ers_require_known_capacity() {
+    assert_eq!(pedal_percent(0.75), 75.0);
+    assert_eq!(gear_label(-1), "R");
+    assert_eq!(gear_label(0), "N");
+    assert_eq!(gear_label(8), "8");
+    assert_eq!(ers_percent(2_000_000.0, Some(4_000_000.0)), Some(50.0));
+    assert_eq!(ers_percent(0.0, Some(4_000_000.0)), Some(0.0));
+    assert_eq!(ers_percent(2_000_000.0, None), None);
+    assert_eq!(ers_percent(1.0, Some(0.0)), None);
+    assert_eq!(ers_percent(f32::NAN, Some(4_000_000.0)), None);
+}
+
+#[test]
+fn rejects_every_truncation_and_trailing_bytes() {
+    for id in [1, 2, 3, 4, 6, 7, 10, 16] {
+        let b = wire(id, 0, 1);
+        for n in 0..b.len() {
+            assert!(parse(&b[..n]).is_err(), "id={id}, n={n}");
+        }
+        let mut extra = b.clone();
+        extra.push(0);
+        assert!(parse(&extra).is_err());
+        assert!(parse(&b).is_ok());
+    }
+}
+
+#[test]
+fn rejects_wrong_format_version_and_player() {
+    let mut b = wire(6, 0, 1);
+    b[0..2].copy_from_slice(&2025u16.to_le_bytes());
+    assert_eq!(parse(&b), Err(ParseError::Format(2025)));
+    b[0..2].copy_from_slice(&2026u16.to_le_bytes());
+    b[5] = 2;
+    assert_eq!(parse(&b), Err(ParseError::Version(2)));
+    b[5] = 1;
+    b[27] = 24;
+    assert_eq!(parse(&b), Err(ParseError::Player(24)));
+    b[27] = 255;
+    assert!(matches!(parse(&b), Ok(Packet::Ignored(_))));
+}
+
+#[test]
+fn rejects_non_finite_and_out_of_range_values() {
+    for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+        let mut b = wire(6, 0, 1);
+        b[31..35].copy_from_slice(&value.to_le_bytes());
+        assert!(matches!(
+            parse(&b),
+            Err(ParseError::InvalidValue("throttle"))
+        ));
+    }
+    let mut b = wire(16, 0, 1);
+    b[29] = 2;
+    assert!(parse(&b).is_err());
+    let mut b = wire(10, 0, 1);
+    b[29..33].copy_from_slice(&101f32.to_le_bytes());
+    assert!(parse(&b).is_err());
+}
+
+#[test]
+fn arbitrary_datagrams_never_panic() {
+    let mut seed = 0x12345678u32;
+    let mut bytes = [0u8; 1500];
+    for round in 0..4000 {
+        for b in &mut bytes {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            *b = seed as u8;
+        }
+        if round % 2 == 0 {
+            bytes[0..2].copy_from_slice(&2026u16.to_le_bytes());
+        }
+        let _ = parse(&bytes[..(seed as usize % 1501)]);
+    }
+}
+
+#[test]
+fn demo_packets_round_trip_without_changing_data() {
+    let mut bytes = [0u8; 1448];
+    for packet in demo::sample(12.0, 720) {
+        let n = demo::encode(packet, &mut bytes);
+        assert_eq!(parse(&bytes[..n]).unwrap(), packet);
+    }
+}
+
+#[test]
+fn frame_sequence_is_per_packet_type() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    assert!(state.apply(parse(&wire(6, 0, 100)).unwrap(), now));
+    assert!(state.apply(parse(&wire(7, 0, 100)).unwrap(), now));
+    assert!(!state.apply(parse(&wire(6, 0, 100)).unwrap(), now));
+    assert!(!state.apply(parse(&wire(6, 0, 99)).unwrap(), now));
+    assert_eq!(state.snapshot.counters.duplicates, 1);
+    assert_eq!(state.snapshot.counters.reordered, 1);
+    assert!(state.snapshot.telemetry.is_some() && state.snapshot.status.is_some());
+}
+
+#[test]
+fn wrapping_sequence_is_supported() {
+    assert!(serial_newer(0, u32::MAX));
+    assert!(!serial_newer(u32::MAX, 0));
+    assert!(!serial_newer(1, 1));
+}
+
+#[test]
+fn session_change_clears_other_packet_families_and_rejects_retired_uid() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(7, 0, 5)).unwrap(), now);
+    let mut new = wire(6, 0, 1);
+    new[7..15].copy_from_slice(&43u64.to_le_bytes());
+    assert!(state.apply(parse(&new).unwrap(), now));
+    assert!(state.snapshot.status.is_none());
+    assert!(!state.apply(parse(&wire(7, 0, 6)).unwrap(), now));
+    assert_eq!(state.snapshot.header.unwrap().session_uid, 43);
+}
+
+#[test]
+fn flashback_clears_slow_data_and_rejects_late_old_timeline() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(10, 0, 500)).unwrap(), now);
+    state.apply(parse(&wire(6, 0, 600)).unwrap(), now);
+    let mut rollback = wire(6, 0, 300);
+    rollback[23..27].copy_from_slice(&601u32.to_le_bytes());
+    assert!(state.apply(parse(&rollback).unwrap(), now));
+    assert!(state.snapshot.damage.is_none());
+    assert!(!state.apply(parse(&wire(10, 0, 599)).unwrap(), now));
+    assert_eq!(state.snapshot.counters.flashbacks, 1);
+}
+
+#[test]
+fn restart_after_silence_accepts_reset_counter() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(6, 0, 600)).unwrap(), now);
+    assert!(state.apply(parse(&wire(6, 0, 1)).unwrap(), now + Duration::from_secs(3)));
+    assert_eq!(state.snapshot.counters.restarts, 1);
+}
+
+#[test]
+fn freshness_is_independent_for_wear_and_temperature() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(10, 0, 1)).unwrap(), now);
+    state.apply(parse(&wire(6, 0, 1)).unwrap(), now);
+    assert_eq!(state.snapshot.connection(now), Connection::Live);
+    let later = now + Duration::from_millis(600);
+    assert_eq!(state.snapshot.connection(later), Connection::Stale);
+    assert!(state.snapshot.damage.unwrap().fresh(later, DAMAGE_TTL));
+    assert!(
+        !state
+            .snapshot
+            .damage
+            .unwrap()
+            .fresh(now + Duration::from_secs(3), DAMAGE_TTL)
+    );
+}
+
+#[test]
+fn inactive_lap_result_prevents_displaying_placeholder_zeroes() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(6, 0, 1)).unwrap(), now);
+    state.apply(parse(&wire(2, 0, 1)).unwrap(), now);
+    assert_eq!(state.snapshot.connection(now), Connection::Inactive);
+}
+
+#[test]
+fn settings_validate_and_save_atomically() {
+    let mut settings = Settings::default();
+    settings.validate().unwrap();
+    settings.halo.scale = f32::NAN;
+    assert!(settings.validate().is_err());
+    settings.halo.scale = 1.2;
+    let path = std::env::temp_dir().join(format!("f1-halo-test-{}.json", std::process::id()));
+    settings.save(&path).unwrap();
+    settings.halo.scale = 1.5;
+    settings.save(&path).unwrap();
+    assert_eq!(Settings::load(&path).unwrap().halo.scale, 1.5);
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn session_events_clear_values_without_replaying_duplicate_start() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    let mut start = wire(3, 0, 1);
+    start[29..33].copy_from_slice(b"SSTA");
+    assert!(state.apply(parse(&start).unwrap(), now));
+    state.apply(parse(&wire(6, 0, 1)).unwrap(), now);
+    assert!(!state.apply(parse(&start).unwrap(), now));
+    assert!(state.snapshot.telemetry.is_some());
+    state.apply(parse(&wire(6, 0, 20)).unwrap(), now);
+    let mut ended = wire(3, 0, 21);
+    ended[29..33].copy_from_slice(b"SEND");
+    assert!(state.apply(parse(&ended).unwrap(), now));
+    assert!(state.snapshot.telemetry.is_none());
+    state.apply(parse(&wire(6, 0, 22)).unwrap(), now);
+    assert!(state.snapshot.telemetry.is_none());
+}
+
+#[test]
+fn late_session_end_does_not_clear_newer_live_data() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(6, 0, 20)).unwrap(), now);
+    let mut ended = wire(3, 0, 10);
+    ended[29..33].copy_from_slice(b"SEND");
+    assert!(!state.apply(parse(&ended).unwrap(), now));
+    assert!(state.snapshot.telemetry.is_some());
+}
+
+#[test]
+fn diagnostics_percentiles_use_actual_samples() {
+    use f1_halo_telemetry::diagnostics::{Diagnostics, percentile};
+    let values = std::collections::VecDeque::from([1.0, 100.0, 3.0, 2.0]);
+    assert_eq!(percentile(&values, 0.95), Some(100.0));
+    assert_eq!(percentile(&std::collections::VecDeque::new(), 0.95), None);
+    let empty = Diagnostics::default().summary(0, 0.0);
+    assert_eq!(empty.gpu_ms_p95, None);
+    assert_eq!(empty.receive_to_present_submit_ms_p95, None);
+}
