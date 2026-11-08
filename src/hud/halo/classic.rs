@@ -67,10 +67,10 @@ impl Classic {
                 0.95,
             );
             p.outline(sm, EDGE, 0.8);
-            p.text(
-                straight_mode_label(aero),
+            draw_straight_mode(
+                p,
+                aero,
                 rect(65.0, 149.0, 165.0, 23.0),
-                HudNumber,
                 if sm_active {
                     INK
                 } else if aero.is_some() {
@@ -85,12 +85,6 @@ impl Classic {
             let (mode, rgb) = aero_state(aero, settings);
             p.text("AERO", rect(72.0, 175.0, 74.0, 26.0), HudNumber, rgb);
             p.text(mode, rect(148.0, 181.0, 77.0, 15.0), HudLabel, rgb);
-            p.text(
-                deploy_label(status),
-                rect(85.0, 204.0, 145.0, 15.0),
-                HudLabel,
-                MUTED,
-            );
         });
         p.rotated((650.0, 160.0), 22.0, |p| {
             let wing = rect(550.0, 124.0, 224.0, 70.0);

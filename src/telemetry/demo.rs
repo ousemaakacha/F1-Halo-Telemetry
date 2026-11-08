@@ -5,6 +5,7 @@ pub const DEMO_ERS_CAPACITY: f32 = 4_000_000.0;
 
 pub fn sample(seconds: f32, frame: u32) -> [Packet; 4] {
     let phase = (seconds * 0.33).sin();
+    let zone_seconds = seconds.rem_euclid(18.0);
     let speed = (190.0 + phase * 125.0).max(0.0);
     let gear = ((speed / 43.0) as i8 + 1).clamp(1, 8);
     let rpm = (6500.0 + (speed % 43.0) * 155.0) as u16;
@@ -36,9 +37,10 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 4] {
         Packet::Status(
             Header { packet_id: 7, ..h },
             CarStatus {
+                fuel_remaining_laps: 0.75 + phase * 1.55,
                 max_rpm: 15000,
                 ers_joules: DEMO_ERS_CAPACITY * (0.58 + phase * 0.27),
-                deploy_mode: if phase > 0.5 { 3 } else { 1 },
+                deploy_mode: (seconds / 4.0).rem_euclid(4.0) as u8,
                 harvest_limit_joules: 8_500_000.0,
                 paused: false,
             },
@@ -52,9 +54,13 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 4] {
         Packet::Aero(
             Header { packet_id: 16, ..h },
             Aero {
-                straight: phase > 0.35,
-                available: true,
-                activation_distance_m: 0,
+                straight: (12.0..16.0).contains(&zone_seconds),
+                available: (10.0..16.0).contains(&zone_seconds),
+                activation_distance_m: if zone_seconds < 10.0 {
+                    ((10.0 - zone_seconds) * 70.0).ceil() as u16
+                } else {
+                    0
+                },
                 overtake_available: phase > 0.0,
                 overtake_active: phase > 0.75,
                 overtake_distance_m: 0,
@@ -111,6 +117,7 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
             c[34..38].copy_from_slice(&t.inner_c);
         }
         Packet::Status(_, s) => {
+            c[13..17].copy_from_slice(&s.fuel_remaining_laps.to_le_bytes());
             c[17..19].copy_from_slice(&s.max_rpm.to_le_bytes());
             c[37..41].copy_from_slice(&s.ers_joules.to_le_bytes());
             c[41] = s.deploy_mode;

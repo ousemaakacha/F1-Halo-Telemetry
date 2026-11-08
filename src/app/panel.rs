@@ -62,8 +62,7 @@ fn layout_decimal(text: &str, current: f32, label: &str) -> std::result::Result<
     if text == format!("{current:.2}") {
         Ok(current)
     } else {
-        text.parse()
-            .map_err(|_| format!("{label}: numero non valido"))
+        text.parse().map_err(|_| format!("{label}: invalid number"))
     }
 }
 
@@ -113,7 +112,7 @@ impl Panel {
             CreateWindowExW(
                 WS_EX_CONTROLPARENT,
                 w!("F1HaloSettings"),
-                w!("F1 Halo Telemetry · Impostazioni"),
+                w!("F1 Halo Telemetry · Settings"),
                 style,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
@@ -269,13 +268,13 @@ impl Panel {
 
     fn build(&mut self) -> Result<()> {
         self.label("F1 HALO TELEMETRY   /   2026 SEASON PACK", 20, 16, 770)?;
-        self.label("UDP: IP locale", 20, 54, 110)?;
+        self.label("UDP: Local IP", 20, 54, 110)?;
         self.edit(IP, 130, 50, 176)?;
-        self.label("Porta", 326, 54, 45)?;
+        self.label("Port", 326, 54, 45)?;
         self.edit(PORT, 375, 50, 80)?;
-        self.button("Demo (dati simulati)", DEMO, 485, 49, 290, true)?;
+        self.button("Demo (simulated data)", DEMO, 485, 49, 290, true)?;
         self.label(
-            "LAYOUT   ·   posizioni in pixel, scala e opacità indipendenti",
+            "LAYOUT   ·   pixel positions, independent scale and opacity",
             20,
             97,
             770,
@@ -284,23 +283,20 @@ impl Panel {
             ("HUD", 20, 150),
             ("X", 188, 80),
             ("Y", 288, 80),
-            ("Scala", 388, 80),
-            ("Opacità", 498, 90),
+            ("Scale", 388, 80),
+            ("Opacity", 498, 90),
         ] {
             self.label(label, x, 127, width)?;
         }
-        for (base, text, y) in [
-            (HALO, "Halo visibile", 151),
-            (TYRES, "Pneumatici visibili", 187),
-        ] {
+        for (base, text, y) in [(HALO, "Show Halo", 151), (TYRES, "Show tyres", 187)] {
             self.button(text, base, 20, y - 2, 165, true)?;
             for (offset, x, width) in [(1, 188, 80), (2, 288, 80), (3, 388, 90), (4, 498, 90)] {
                 self.edit(base + offset, x, y, width)?;
             }
         }
         self.button("Edit / Race", EDIT, 622, 150, 170, false)?;
-        self.button("Ripristina layout", LAYOUT, 622, 186, 170, false)?;
-        self.label("Modello Halo", 680, 217, 114)?;
+        self.button("Reset layout", LAYOUT, 622, 186, 170, false)?;
+        self.label("Halo model", 680, 217, 114)?;
         self.combo(
             HALO_MODEL,
             680,
@@ -308,23 +304,23 @@ impl Panel {
             114,
             &HaloModel::ALL.map(HaloModel::label),
         )?;
-        self.label("PNEUMATICI", 20, 236, 175)?;
+        self.label("TYRES", 20, 236, 175)?;
         self.combo(MODE, 188, 232, 130, &["Surface", "Inner", "Both"])?;
-        self.label("Temp. min / max °C", 337, 237, 150)?;
+        self.label("Min / max temp. °C", 337, 237, 150)?;
         self.edit(TEMP_MIN, 498, 232, 70)?;
         self.edit(TEMP_MAX, 582, 232, 70)?;
-        self.label("Usura: attenzione / critica %", 20, 276, 270)?;
+        self.label("Wear: warning / critical %", 20, 276, 270)?;
         self.edit(WEAR_WARN, 291, 271, 70)?;
         self.edit(WEAR_CRIT, 375, 271, 70)?;
-        self.label("0% usura = pneumatico nuovo", 475, 276, 315)?;
-        self.label("COLORI   ·   formato #RRGGBB", 20, 317, 360)?;
+        self.label("0% wear = new tyre", 475, 276, 315)?;
+        self.label("COLOURS   ·   #RRGGBB format", 20, 317, 360)?;
         for (i, (label, x, y)) in [
-            ("Accento", 20, 350),
-            ("Gas", 287, 350),
-            ("Freno", 554, 350),
-            ("Freddo", 20, 386),
-            ("Ottimale", 287, 386),
-            ("Caldo", 554, 386),
+            ("Accent", 20, 350),
+            ("Throttle", 287, 350),
+            ("Brake", 554, 350),
+            ("Cold", 20, 386),
+            ("Optimal", 287, 386),
+            ("Hot", 554, 386),
         ]
         .into_iter()
         .enumerate()
@@ -333,31 +329,24 @@ impl Panel {
             self.edit(COLOUR + i as u16, x + 90, y, 130)?;
         }
         self.label("FPS", 20, 435, 45)?;
-        self.combo(FPS, 70, 430, 150, &["60 FPS", "120 FPS", "Refresh monitor"])?;
-        self.label("Hotkey Edit", 250, 435, 100)?;
+        self.combo(FPS, 70, 430, 150, &["60 FPS", "120 FPS", "Monitor refresh"])?;
+        self.label("Edit hotkey", 250, 435, 100)?;
         self.edit(HOTKEY, 356, 430, 220)?;
-        self.button("Nascondi Halo dietro", REAR_VIEW, 622, 430, 170, true)?;
-        self.label("Hotkey visibilità HUD", 20, 475, 177)?;
+        self.button("Hide Halo in rear view", REAR_VIEW, 622, 430, 170, true)?;
+        self.label("HUD visibility hotkey", 20, 475, 177)?;
         self.edit(VISIBILITY_HOTKEY, 203, 470, 220)?;
-        self.label("Entrambi gli HUD", 438, 475, 165)?;
-        self.button(
-            "Mostra / nascondi HUD",
-            TOGGLE_OVERLAYS,
-            622,
-            470,
-            170,
-            false,
-        )?;
+        self.label("Both HUDs", 438, 475, 165)?;
+        self.button("Show / hide HUDs", TOGGLE_OVERLAYS, 622, 470, 170, false)?;
         self.control(
             w!("STATIC"),
-            "Capacità ERS automatica: in attesa dei dati vettura",
+            "Automatic ERS capacity: waiting for car data",
             BATTERY_STATUS,
             (20, 499, 775, 16),
             WINDOW_STYLE(0),
         )?;
         self.control(
             w!("STATIC"),
-            "Inizializzazione…",
+            "Initializing…",
             DIAGNOSTICS,
             (20, 515, 775, 112),
             WINDOW_STYLE(0),
@@ -369,7 +358,7 @@ impl Panel {
             (20, 704, 775, 30),
             WINDOW_STYLE(0),
         )?;
-        self.label("Profilo Halo", 20, 638, 120)?;
+        self.label("Halo profile", 20, 638, 120)?;
         let profile = self.control(
             w!("COMBOBOX"),
             "",
@@ -380,20 +369,20 @@ impl Panel {
         unsafe {
             SendMessageW(profile, CB_LIMITTEXT, Some(WPARAM(64)), None);
         }
-        self.button("Carica profilo", LOAD_PROFILE, 452, 632, 150, false)?;
-        self.button("Salva profilo", SAVE_PROFILE, 614, 632, 180, false)?;
+        self.button("Load profile", LOAD_PROFILE, 452, 632, 150, false)?;
+        self.button("Save profile", SAVE_PROFILE, 614, 632, 180, false)?;
         self.label(
-            "Nome libero, es. Ferrari. Salva aggiorna posizione e scala; Carica le ripristina.",
+            "Choose a name, e.g. Ferrari. Save stores position and scale; Load restores them.",
             20,
             672,
             775,
         )?;
         for (text, id, x, width) in [
-            ("Applica e salva", APPLY, 20, 151),
-            ("Esporta diagnostica", EXPORT, 183, 174),
-            ("Impostazioni iniziali", RESET, 369, 178),
-            ("Chiudi pannello", SHOW, 559, 145),
-            ("Esci", EXIT, 716, 78),
+            ("Apply and save", APPLY, 20, 151),
+            ("Export diagnostics", EXPORT, 183, 174),
+            ("Default settings", RESET, 369, 178),
+            ("Close panel", SHOW, 559, 145),
+            ("Exit", EXIT, 716, 78),
         ] {
             self.button(text, id, x, 752, width, false)?;
         }
@@ -558,13 +547,13 @@ impl Panel {
                 .text(HALO + 1)
                 .trim()
                 .parse()
-                .map_err(|_| "X Halo: intero non valido")?,
+                .map_err(|_| "Halo X: invalid integer")?,
             y: self
                 .text(HALO + 2)
                 .trim()
                 .parse()
-                .map_err(|_| "Y Halo: intero non valido")?,
-            scale: layout_decimal(&self.text(HALO + 3), current.scale, "Scala Halo")?,
+                .map_err(|_| "Halo Y: invalid integer")?,
+            scale: layout_decimal(&self.text(HALO + 3), current.scale, "Halo scale")?,
         })
     }
 
@@ -574,43 +563,43 @@ impl Panel {
                 .trim()
                 .replace(',', ".")
                 .parse()
-                .map_err(|_| format!("{name}: numero non valido"))
+                .map_err(|_| format!("{name}: invalid number"))
         };
         let integer = |id, name: &str| -> std::result::Result<i32, String> {
             self.text(id)
                 .trim()
                 .parse()
-                .map_err(|_| format!("{name}: intero non valido"))
+                .map_err(|_| format!("{name}: invalid integer"))
         };
         let mut s = old.clone();
         s.hide_halo_rear_view = self.checked(REAR_VIEW);
         s.halo_model = match self.selected(HALO_MODEL) {
             0 => HaloModel::Wide,
             1 => HaloModel::Classic,
-            _ => return Err("Seleziona un modello Halo.".into()),
+            _ => return Err("Select a Halo model.".into()),
         };
         s.bind_ip = self.text(IP).trim().into();
         s.port = self
             .text(PORT)
             .trim()
             .parse()
-            .map_err(|_| "Porta UDP non valida")?;
+            .map_err(|_| "Invalid UDP port")?;
         for (base, layout) in [(HALO, &mut s.halo), (TYRES, &mut s.tyres)] {
             layout.visible = self.checked(base);
             layout.x = integer(base + 1, "X")?;
             layout.y = integer(base + 2, "Y")?;
-            layout.scale = layout_decimal(&self.text(base + 3), layout.scale, "Scala")?;
-            layout.opacity = layout_decimal(&self.text(base + 4), layout.opacity, "Opacità")?;
+            layout.scale = layout_decimal(&self.text(base + 3), layout.scale, "Scale")?;
+            layout.opacity = layout_decimal(&self.text(base + 4), layout.opacity, "Opacity")?;
         }
         s.tyre_mode = match self.selected(MODE) {
             0 => TyreMode::Surface,
             1 => TyreMode::Inner,
             _ => TyreMode::Both,
         };
-        s.temperature_min_c = number(TEMP_MIN, "Temperatura minima")?;
-        s.temperature_max_c = number(TEMP_MAX, "Temperatura massima")?;
-        s.wear_warning_percent = number(WEAR_WARN, "Usura attenzione")?;
-        s.wear_critical_percent = number(WEAR_CRIT, "Usura critica")?;
+        s.temperature_min_c = number(TEMP_MIN, "Minimum temperature")?;
+        s.temperature_max_c = number(TEMP_MAX, "Maximum temperature")?;
+        s.wear_warning_percent = number(WEAR_WARN, "Wear warning")?;
+        s.wear_critical_percent = number(WEAR_CRIT, "Critical wear")?;
         for (i, rgb) in [
             &mut s.colours.accent,
             &mut s.colours.throttle,
@@ -625,11 +614,11 @@ impl Panel {
             let text = self.text(COLOUR + i as u16);
             let value = text.trim().trim_start_matches('#');
             if value.len() != 6 || !value.is_ascii() {
-                return Err("Colori: usare #RRGGBB".into());
+                return Err("Colours: use #RRGGBB".into());
             }
             for k in 0..3 {
                 rgb[k] = u8::from_str_radix(&value[k * 2..k * 2 + 2], 16)
-                    .map_err(|_| "Colore esadecimale non valido")?;
+                    .map_err(|_| "Invalid hexadecimal colour")?;
             }
         }
         s.fps = match self.selected(FPS) {
@@ -792,14 +781,14 @@ impl Panel {
                 return;
             };
             for (id, title, checked) in [
-                (SHOW, "Impostazioni", false),
+                (SHOW, "Settings", false),
                 (EDIT, "Edit Mode", edit),
-                (TOGGLE_OVERLAYS, "Mostra entrambi gli HUD", overlays_visible),
-                (TOGGLE_HALO, "Mostra / nascondi Halo", false),
-                (TOGGLE_TYRES, "Mostra / nascondi pneumatici", false),
-                (CYCLE, "Cambia modalità temperature", false),
+                (TOGGLE_OVERLAYS, "Show both HUDs", overlays_visible),
+                (TOGGLE_HALO, "Show / hide Halo", false),
+                (TOGGLE_TYRES, "Show / hide tyres", false),
+                (CYCLE, "Cycle temperature mode", false),
                 (TOGGLE_DEMO, "Demo", demo),
-                (EXIT, "Esci", false),
+                (EXIT, "Exit", false),
             ] {
                 let text = wide(title);
                 let _ = AppendMenuW(
@@ -838,7 +827,7 @@ impl Panel {
             hIcon: unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() },
             ..Default::default()
         };
-        let text = wide("F1 Halo Telemetry · doppio clic: impostazioni");
+        let text = wide("F1 Halo Telemetry · double-click: settings");
         data.szTip[..text.len()].copy_from_slice(&text);
         self.tray = unsafe { Shell_NotifyIconW(NIM_ADD, &data).as_bool() };
     }

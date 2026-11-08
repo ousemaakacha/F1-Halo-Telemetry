@@ -59,6 +59,7 @@ fn reads_independent_last_car_fixture_with_exact_2026_offsets() {
 fn status_offsets_include_new_harvest_limit() {
     let mut b = wire(7, 23, 99);
     let o = 29 + 59 * 23;
+    b[o + 13..o + 17].copy_from_slice(&2.3f32.to_le_bytes());
     b[o + 17..o + 19].copy_from_slice(&15000u16.to_le_bytes());
     b[o + 37..o + 41].copy_from_slice(&2_000_000f32.to_le_bytes());
     b[o + 41] = 3;
@@ -70,6 +71,27 @@ fn status_offsets_include_new_harvest_limit() {
     assert_eq!(s.ers_joules, 2_000_000.0);
     assert_eq!(s.harvest_limit_joules, 8_500_000.0);
     assert_eq!(s.deploy_mode, 3);
+    assert_eq!(s.fuel_remaining_laps, 2.3);
+    b[o + 13..o + 17].copy_from_slice(&(-0.8f32).to_le_bytes());
+    let Packet::Status(_, s) = parse(&b).unwrap() else {
+        panic!()
+    };
+    assert_eq!(s.fuel_remaining_laps, -0.8);
+}
+
+#[test]
+fn fuel_margin_accepts_signed_values_but_rejects_non_finite_udp_data() {
+    for player in [0, 23] {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut b = wire(7, player, 1);
+            let o = 29 + 59 * player as usize + 13;
+            b[o..o + 4].copy_from_slice(&value.to_le_bytes());
+            assert_eq!(
+                parse(&b),
+                Err(ParseError::InvalidValue("fuelRemainingLaps"))
+            );
+        }
+    }
 }
 
 #[test]
@@ -78,6 +100,7 @@ fn aero_is_independent_of_legacy_drs() {
     let o = 29 + 10 * 23;
     b[o] = 1;
     b[o + 1] = 1;
+    b[o + 2..o + 4].copy_from_slice(&350u16.to_le_bytes());
     b[o + 4] = 1;
     b[o + 5] = 1;
     b[o + 8] = 1;
@@ -93,6 +116,7 @@ fn aero_is_independent_of_legacy_drs() {
             && a.regulations_2026
     );
     assert_eq!(a.overtake_distance_m, 123);
+    assert_eq!(a.activation_distance_m, 350);
 }
 
 #[test]
@@ -201,9 +225,11 @@ fn arbitrary_datagrams_never_panic() {
 #[test]
 fn demo_packets_round_trip_without_changing_data() {
     let mut bytes = [0u8; 1448];
-    for packet in demo::sample(12.0, 720) {
-        let n = demo::encode(packet, &mut bytes);
-        assert_eq!(parse(&bytes[..n]).unwrap(), packet);
+    for seconds in [0.0, 4.0, 8.0, 9.99, 10.0, 12.0, 16.0, 18.0, 1028.0] {
+        for packet in demo::sample(seconds, 720) {
+            let n = demo::encode(packet, &mut bytes);
+            assert_eq!(parse(&bytes[..n]).unwrap(), packet);
+        }
     }
 }
 

@@ -167,7 +167,7 @@ impl Overlay {
         let title = if index == 0 {
             w!("F1 Halo Telemetry — Halo")
         } else {
-            w!("F1 Halo Telemetry — Pneumatici")
+            w!("F1 Halo Telemetry — Tyres")
         };
         let hwnd = unsafe {
             CreateWindowExW(

@@ -55,9 +55,10 @@ pub enum Font {
     HudNumber,
     HudSpeed,
     HudSecondary,
+    HudFuel,
 }
 
-const FONT_COUNT: usize = 10;
+const FONT_COUNT: usize = 11;
 
 impl Font {
     fn index(self) -> usize {
@@ -121,7 +122,7 @@ impl Graphics {
                     DWRITE_FONT_STYLE_NORMAL,
                     DWRITE_FONT_STRETCH_NORMAL,
                     size,
-                    w!("it-IT"),
+                    w!("en-GB"),
                 )?;
                 font.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
                 font.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
@@ -145,6 +146,7 @@ impl Graphics {
                 hud(22.0)?,
                 hud(36.0)?,
                 hud(27.0)?,
+                hud(17.0)?,
             ];
             let gpu = GpuTimer::new(&device).ok();
             Ok(Self {

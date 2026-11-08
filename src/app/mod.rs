@@ -49,20 +49,20 @@ impl Options {
                 "--demo" => options.demo = true,
                 "--edit" => options.edit = true,
                 "--no-settings" => options.no_settings = true,
-                "--config" => options.config = Some(args.next().ok_or("--config richiede un percorso")?.into()),
-                "--diagnostics" => options.diagnostics = Some(args.next().ok_or("--diagnostics richiede un percorso")?.into()),
+                "--config" => options.config = Some(args.next().ok_or("--config requires a path")?.into()),
+                "--diagnostics" => options.diagnostics = Some(args.next().ok_or("--diagnostics requires a path")?.into()),
                 "--quit-after" | "--recreate-device-after" => {
-                    let seconds: f64 = args.next().ok_or("Manca durata in secondi")?.parse().map_err(|_| "Durata non valida")?;
-                    if !seconds.is_finite() || !(0.1..=86400.0).contains(&seconds) { return Err("Durata: 0.1–86400 secondi".into()); }
+                    let seconds: f64 = args.next().ok_or("Missing duration in seconds")?.parse().map_err(|_| "Invalid duration")?;
+                    if !seconds.is_finite() || !(0.1..=86400.0).contains(&seconds) { return Err("Duration: 0.1–86400 seconds".into()); }
                     let duration = Some(Duration::from_secs_f64(seconds));
                     if argument == "--quit-after" { options.quit_after = duration; } else { options.recreate_after = duration; }
                 }
                 "--fps" => options.fps = Some(match args.next().as_deref() {
                     Some("60") => FpsLimit::Fps60, Some("120") => FpsLimit::Fps120,
-                    Some("adaptive") => FpsLimit::Adaptive, _ => return Err("--fps: usare 60, 120 o adaptive".into()),
+                    Some("adaptive") => FpsLimit::Adaptive, _ => return Err("--fps: use 60, 120 or adaptive".into()),
                 }),
-                "--help" | "-h" => return Err("F1 Halo Telemetry\n\n--demo\n--edit\n--no-settings\n--config <settings.json>\n--fps <60|120|adaptive>\n--quit-after <secondi>\n--diagnostics <output.json>\n--recreate-device-after <secondi> (test ricreazione risorse)".into()),
-                _ => return Err(format!("Opzione sconosciuta: {argument}")),
+                "--help" | "-h" => return Err("F1 Halo Telemetry\n\n--demo\n--edit\n--no-settings\n--config <settings.json>\n--fps <60|120|adaptive>\n--quit-after <seconds>\n--diagnostics <output.json>\n--recreate-device-after <seconds> (test resource recreation)".into()),
+                _ => return Err(format!("Unknown option: {argument}")),
             }
         }
         Ok(options)
@@ -166,7 +166,7 @@ pub fn run(options: Options) -> Result<(), String> {
     );
     app.hotkeys = bindings;
     if let Err(error) = app.rear_input.register(app.panel.hwnd) {
-        hotkey_errors.push(format!("Input DualSense non disponibile: {error}"));
+        hotkey_errors.push(format!("DualSense input unavailable: {error}"));
     }
     if !app.options.no_settings {
         app.panel.show();
@@ -509,7 +509,7 @@ impl App {
                 .effective_layouts(self.overlays_visible, hidden)[0];
             if let Err(error) = self.overlays[0].apply_layout(layout) {
                 self.rear_hidden = previous;
-                self.panel.result(&format!("Visibilità Halo: {error}"));
+                self.panel.result(&format!("Halo visibility: {error}"));
             } else {
                 self.dirty = true;
                 self.next_frame = now;
@@ -533,9 +533,9 @@ impl App {
         self.next_frame = Instant::now();
         self.previous_live = false;
         self.panel.result(if visible {
-            "HUD mostrati secondo le preferenze individuali."
+            "HUDs shown according to individual visibility settings."
         } else {
-            "HUD nascosti. La telemetria continua; premi la hotkey visibilità per mostrarli."
+            "HUDs hidden. Telemetry continues; press the visibility hotkey to show them."
         });
         Ok(())
     }
@@ -566,8 +566,8 @@ impl App {
                 }
             }
         }
-        self.panel.result(if edit { "EDIT: trascina HUD, usa gli angoli. Rotella: scala; Shift+rotella: opacità. Hotkey per Race Mode." }
-            else { "RACE: HUD click-through. Il gioco mantiene il focus. Hotkey per modificare." });
+        self.panel.result(if edit { "EDIT: drag HUDs; resize at corners. Wheel: scale; Shift+wheel: opacity. Hotkey for Race Mode." }
+            else { "RACE: HUDs pass clicks through. The game keeps focus. Press the hotkey to edit." });
         Ok(())
     }
 
@@ -615,9 +615,7 @@ impl App {
                     if let Err(error) = self.receiver.source(&s, demo) {
                         return match self.settings.save(&self.config) {
                             Ok(()) => Err(error),
-                            Err(restore) => {
-                                Err(format!("{error}; ripristino impostazioni: {restore}"))
-                            }
+                            Err(restore) => Err(format!("{error}; restoring settings: {restore}")),
                         };
                     }
                 }
@@ -642,7 +640,7 @@ impl App {
         }
         self.monitor_hz = overlay::monitor_refresh(self.overlays[0].hwnd);
         self.panel.populate_layout(&self.settings);
-        self.panel.result("Impostazioni applicate e salvate.");
+        self.panel.result("Settings applied and saved.");
         self.dirty = true;
         Ok(())
     }
@@ -681,8 +679,8 @@ impl App {
         self.panel.populate_halo_geometry(&self.settings);
         self.panel.populate_profiles(&self.settings);
         self.panel.result(&format!(
-            "Profilo «{name}» {}. Posizione e scala Halo applicate.",
-            if save { "salvato" } else { "caricato" }
+            "Profile «{name}» {}. Halo position and scale applied.",
+            if save { "saved" } else { "loaded" }
         ));
         self.dirty = true;
         self.next_frame = Instant::now();
@@ -748,73 +746,73 @@ impl App {
                 self.sync_layout()?;
             }
             Action::CycleTyres => self.cycle_tyres()?,
-            Action::Command(command) => {
-                match command {
-                    panel::APPLY => self.apply()?,
-                    panel::SAVE_PROFILE => self.halo_profile(true)?,
-                    panel::LOAD_PROFILE => self.halo_profile(false)?,
-                    panel::EDIT => self.set_edit(!self.edit)?,
-                    panel::TOGGLE_OVERLAYS => self.set_overlays_visible(!self.overlays_visible)?,
-                    panel::SHOW => {
-                        if self.panel.visible() {
-                            self.panel.hide();
-                        } else {
-                            self.panel.populate(&self.settings, self.demo);
-                            self.panel.show();
-                        }
+            Action::Command(command) => match command {
+                panel::APPLY => self.apply()?,
+                panel::SAVE_PROFILE => self.halo_profile(true)?,
+                panel::LOAD_PROFILE => self.halo_profile(false)?,
+                panel::EDIT => self.set_edit(!self.edit)?,
+                panel::TOGGLE_OVERLAYS => self.set_overlays_visible(!self.overlays_visible)?,
+                panel::SHOW => {
+                    if self.panel.visible() {
+                        self.panel.hide();
+                    } else {
+                        self.panel.populate(&self.settings, self.demo);
+                        self.panel.show();
                     }
-                    panel::LAYOUT => {
-                        let (halo_visible, tyres_visible) =
-                            (self.settings.halo.visible, self.settings.tyres.visible);
-                        self.settings.halo = Default::default();
-                        self.settings.tyres = Default::default();
-                        self.settings.halo.visible = halo_visible;
-                        self.settings.tyres.visible = tyres_visible;
-                        default_layout(&mut self.settings);
-                        self.apply_layouts()?;
-                        self.sync_layout()?;
-                    }
-                    panel::RESET => {
-                        let mut defaults = Settings::default();
-                        default_layout(&mut defaults);
-                        defaults.halo_profiles = self.settings.halo_profiles.clone();
-                        defaults.active_halo_profile = self.settings.active_halo_profile.clone();
-                        self.panel.populate(&defaults, false);
-                        self.panel.result("Valori iniziali caricati nel pannello. Applica e salva per confermarli.");
-                    }
-                    panel::EXPORT => {
-                        let path = self
-                            .config
-                            .parent()
-                            .unwrap_or(std::path::Path::new("."))
-                            .join("diagnostics.json");
-                        self.export(&path)?;
-                        self.panel
-                            .result(&format!("Diagnostica: {}", path.display()));
-                    }
-                    panel::EXIT => self.quit = true,
-                    panel::CYCLE => self.cycle_tyres()?,
-                    panel::TOGGLE_HALO | panel::TOGGLE_TYRES => {
-                        let index = usize::from(command == panel::TOGGLE_TYRES);
-                        let layout = if index == 0 {
-                            &mut self.settings.halo
-                        } else {
-                            &mut self.settings.tyres
-                        };
-                        layout.visible = !layout.visible;
-                        self.apply_layouts()?;
-                        self.sync_layout()?;
-                    }
-                    panel::TOGGLE_DEMO => {
-                        self.demo = !self.demo;
-                        self.receiver.source(&self.settings, self.demo)?;
-                        self.snapshot = Snapshot::default();
-                        self.panel.check(panel::DEMO, self.demo);
-                        self.dirty = true;
-                    }
-                    _ => (),
                 }
-            }
+                panel::LAYOUT => {
+                    let (halo_visible, tyres_visible) =
+                        (self.settings.halo.visible, self.settings.tyres.visible);
+                    self.settings.halo = Default::default();
+                    self.settings.tyres = Default::default();
+                    self.settings.halo.visible = halo_visible;
+                    self.settings.tyres.visible = tyres_visible;
+                    default_layout(&mut self.settings);
+                    self.apply_layouts()?;
+                    self.sync_layout()?;
+                }
+                panel::RESET => {
+                    let mut defaults = Settings::default();
+                    default_layout(&mut defaults);
+                    defaults.halo_profiles = self.settings.halo_profiles.clone();
+                    defaults.active_halo_profile = self.settings.active_halo_profile.clone();
+                    self.panel.populate(&defaults, false);
+                    self.panel.result(
+                        "Defaults loaded into the panel. Choose Apply and save to use them.",
+                    );
+                }
+                panel::EXPORT => {
+                    let path = self
+                        .config
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join("diagnostics.json");
+                    self.export(&path)?;
+                    self.panel
+                        .result(&format!("Diagnostics: {}", path.display()));
+                }
+                panel::EXIT => self.quit = true,
+                panel::CYCLE => self.cycle_tyres()?,
+                panel::TOGGLE_HALO | panel::TOGGLE_TYRES => {
+                    let index = usize::from(command == panel::TOGGLE_TYRES);
+                    let layout = if index == 0 {
+                        &mut self.settings.halo
+                    } else {
+                        &mut self.settings.tyres
+                    };
+                    layout.visible = !layout.visible;
+                    self.apply_layouts()?;
+                    self.sync_layout()?;
+                }
+                panel::TOGGLE_DEMO => {
+                    self.demo = !self.demo;
+                    self.receiver.source(&self.settings, self.demo)?;
+                    self.snapshot = Snapshot::default();
+                    self.panel.check(panel::DEMO, self.demo);
+                    self.dirty = true;
+                }
+                _ => (),
+            },
         }
         Ok(())
     }
@@ -844,29 +842,42 @@ impl App {
         if !self.panel.visible() {
             return;
         }
-        self.panel.battery_status(&self.snapshot.ers_capacity.map(|c| {
-            let source = match c.source {
-                crate::telemetry::CapacitySource::GameFiles => "file vettura del gioco",
-                crate::telemetry::CapacitySource::Demo => "Demo simulata",
-            };
-            format!("Capacità ERS automatica: {:.2} MJ · {} · {source}", c.joules / 1_000_000.0, c.year)
-        }).unwrap_or_else(|| "Capacità ERS automatica non disponibile: in attesa dati / file vettura compatibili".into()));
+        self.panel.battery_status(
+            &self
+                .snapshot
+                .ers_capacity
+                .map(|c| {
+                    let source = match c.source {
+                        crate::telemetry::CapacitySource::GameFiles => "game vehicle files",
+                        crate::telemetry::CapacitySource::Demo => "simulated demo",
+                    };
+                    format!(
+                        "Automatic ERS capacity: {:.2} MJ · {} · {source}",
+                        c.joules / 1_000_000.0,
+                        c.year
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "Automatic ERS capacity unavailable: waiting for compatible car data / files"
+                        .into()
+                }),
+        );
         let summary = self.diagnostics.summary(self.usage.memory, self.usage.cpu);
-        let format = |v: Option<f64>| v.map(|v| format!("{v:.2}")).unwrap_or_else(|| "n/d".into());
+        let format = |v: Option<f64>| v.map(|v| format!("{v:.2}")).unwrap_or_else(|| "n/a".into());
         let c = self.snapshot.counters;
         let adapter = self
             .graphics
             .as_ref()
             .map(|g| g.adapter_name.as_str())
-            .unwrap_or("device non disponibile");
+            .unwrap_or("device unavailable");
         self.panel.diagnostics(&format!(
-            "{}  |  {}:{}  |  {}\r\nUDP Hz: Telemetry {:.1} · Status {:.1} · Damage {:.1} · Aero {:.1}   |   Errori {} / formato {} / fuori ordine {}\r\nDraw CPU p95 {} ms · intervallo p95 {} ms · RX→Present p95 {} ms · GPU p95 {} ms\r\nCPU {:.2}% · RAM {:.1} MB · frame {} · ricreazioni {}   |   {}",
+            "{}  |  {}:{}  |  {}\r\nUDP Hz: Telemetry {:.1} · Status {:.1} · Damage {:.1} · Aero {:.1}   |   Errors {} / format {} / reordered {}\r\nDraw CPU p95 {} ms · interval p95 {} ms · RX→Present p95 {} ms · GPU p95 {} ms\r\nCPU {:.2}% · RAM {:.1} MB · frames {} · recreations {}   |   {}",
             self.snapshot.connection(now).label(), self.settings.bind_ip, self.settings.port, adapter,
             self.rates[6], self.rates[7], self.rates[10], self.rates[16], c.malformed, c.unsupported, c.reordered,
             format(summary.draw_cpu_ms_p95), format(summary.frame_interval_ms_p95),
             format(summary.receive_to_present_submit_ms_p95), format(summary.gpu_ms_p95),
             self.usage.cpu, self.usage.memory as f64 / 1_048_576.0, summary.render_samples, summary.device_recreations,
-            self.graphics_error.as_deref().unwrap_or("Latenza di invio, non ottica; nessuna misura FPS del gioco.")));
+            self.graphics_error.as_deref().unwrap_or("Submission latency only; optical latency and game FPS are not measured.")));
     }
 
     fn export(&mut self, path: &std::path::Path) -> Result<(), String> {
@@ -888,6 +899,13 @@ impl App {
                 "source": match c.source { crate::telemetry::CapacitySource::GameFiles => "game_files", crate::telemetry::CapacitySource::Demo => "demo" }
             })),
             "ers_energy_joules": self.snapshot.status.map(|s| s.value.ers_joules),
+            "ers_deploy_mode": self.snapshot.status.map(|s| s.value.deploy_mode),
+            "fuel_margin_laps": self.snapshot.status.map(|s| s.value.fuel_remaining_laps),
+            "straight_mode": self.snapshot.aero.map(|a| serde_json::json!({
+                "active": a.value.straight, "available": a.value.available,
+                "activation_distance_m": a.value.activation_distance_m,
+                "regulations_2026": a.value.regulations_2026,
+            })),
             "ers_percent": self.snapshot.status.and_then(|s| crate::telemetry::ers_percent(
                 s.value.ers_joules, self.snapshot.ers_capacity.map(|c| c.joules))),
             "overlays_visible": self.overlays_visible,

@@ -38,6 +38,7 @@ pub struct CarTelemetry {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CarStatus {
+    pub fuel_remaining_laps: f32,
     pub max_rpm: u16,
     pub ers_joules: f32,
     pub deploy_mode: u8,
@@ -107,16 +108,16 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Truncated => write!(f, "header UDP incompleto"),
-            Self::Format(v) => write!(f, "formato UDP {v} non supportato; selezionare 2026"),
-            Self::Version(v) => write!(f, "versione pacchetto {v} non supportata; prevista 1"),
-            Self::Player(v) => write!(f, "indice giocatore {v} non valido"),
+            Self::Truncated => write!(f, "incomplete UDP header"),
+            Self::Format(v) => write!(f, "unsupported UDP format {v}; select 2026"),
+            Self::Version(v) => write!(f, "unsupported packet version {v}; expected 1"),
+            Self::Player(v) => write!(f, "invalid player index {v}"),
             Self::Length {
                 id,
                 expected,
                 actual,
-            } => write!(f, "pacchetto {id}: {actual} byte, previsti {expected}"),
-            Self::InvalidValue(name) => write!(f, "valore UDP non valido: {name}"),
+            } => write!(f, "packet {id}: {actual} bytes, expected {expected}"),
+            Self::InvalidValue(name) => write!(f, "invalid UDP value: {name}"),
         }
     }
 }
@@ -234,6 +235,12 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
             Packet::Status(
                 h,
                 CarStatus {
+                    fuel_remaining_laps: finite_range(
+                        f32_at(c, 13),
+                        -f32::MAX,
+                        f32::MAX,
+                        "fuelRemainingLaps",
+                    )?,
                     max_rpm: u16_at(c, 17),
                     ers_joules: finite_range(f32_at(c, 37), 0.0, f32::MAX, "ersStoreEnergy")?,
                     deploy_mode: c[41],

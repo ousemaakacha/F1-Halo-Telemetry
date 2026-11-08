@@ -8,8 +8,8 @@ della memoria di F1 25.
 ## Download rapido
 
 - **Windows x64:** [scarica l'app](downloads/f1-halo-telemetry.exe), poi avviala.
-- Per provare gli HUD senza F1 25, seleziona **Demo (dati simulati)** e premi
-  **Applica e salva**.
+- Per provare gli HUD senza F1 25, seleziona **Demo (simulated data)** e premi
+  **Apply and save**.
 - Per usare telemetria reale, imposta UDP in F1 25 come descritto sotto.
 - Per compilare dai sorgenti, installa Rust e segui [Compilazione Windows](#compilazione-windows).
 
@@ -22,10 +22,9 @@ Aprire `dist/F1-Halo-Telemetry/f1-halo-telemetry.exe`, oppure l'eseguibile in
 `target/release` dopo la compilazione. Il pannello impostazioni compare all'avvio.
 Se si è estratto il pacchetto portabile, l'eseguibile si trova accanto a questo README.
 L'applicazione ascolta UDP su `127.0.0.1:20777` e mostra uno stato di attesa finché
-non riceve dati validi. La casella **Demo (dati simulati)**, seguita da **Applica e
-salva**, permette di provare entrambi gli HUD senza il gioco.
+non riceve dati validi. La casella **Demo (simulated data)**, seguita da **Apply and save**, permette di provare entrambi gli HUD senza il gioco.
 
-La Demo è esplicita: ogni HUD Halo riporta **DEMO · DATI SIMULATI**. La Demo non
+La Demo è esplicita: ogni HUD Halo riporta **DEMO · SIMULATED DATA**. La Demo non
 si attiva automaticamente quando manca la connessione e non viene salvata come
 sorgente predefinita. Per la guida usare il gioco in **Borderless Fullscreen**.
 Il funzionamento sopra fullscreen esclusivo dipende dal sistema e non è garantito.
@@ -68,12 +67,12 @@ Il comando conserva posizione e preferenze di visibilità dei singoli HUD;
 alla riapertura dell'app la visibilità globale riparte attiva. Quando gli HUD
 sono nascosti la ricezione continua, mentre il rendering si arresta.
 
-**Nascondi Halo dietro**, attivo per impostazione iniziale, usa lo **stick
+**Hide Halo in rear view**, attivo per impostazione iniziale, usa lo **stick
 destro del controller PS5 verso il basso**, senza premere R3: Halo scompare
 mentre lo tieni abbassato e torna al rilascio. Il mini HUD pneumatici resta visibile secondo le
 sue preferenze. Funziona con entrambi i modelli Halo durante la guida, con F1 25
 in primo piano; in Demo ed Edit resta disattivato. La casella nel pannello,
-seguita da **Applica e salva**, permette di disabilitarlo. Non cambia le
+seguita da **Apply and save**, permette di disabilitarlo. Non cambia le
 preferenze di visibilità manuale: un Halo già nascosto rimane nascosto.
 
 Supporta DualSense USB/Bluetooth e controller esposti tramite XInput da Steam
@@ -91,30 +90,30 @@ basso e tornare alla visuale anteriore al rilascio.
 | Clic destro in Edit | Menu rapido con visibilità, modalità gomme, Demo e impostazioni |
 | Icona nell'area di notifica | Doppio clic: pannello; clic destro: menu rapido |
 
-Chiudere il pannello nasconde soltanto le impostazioni. **Esci** termina
+Chiudere il pannello nasconde soltanto le impostazioni. **Exit** termina
 l'applicazione. Visibilità, posizione, scala, opacità, colori, soglie e hotkey
 sono persistenti. Le modifiche effettuate con mouse sono salvate al rilascio;
-i campi del pannello richiedono **Applica e salva**. **Ripristina layout** agisce
-subito sul layout. **Impostazioni iniziali** carica i valori nel pannello e richiede
+i campi del pannello richiedono **Apply and save**. **Reset layout** agisce
+subito sul layout. **Default settings** carica i valori nel pannello e richiede
 poi Applica. Telemetria e ricezione continuano durante la modifica.
 
-**Modello Halo** permette di scegliere **Ampio** (primo riferimento) oppure
-**Classico** (secondo riferimento). Premere **Applica e salva**: il cambio avviene
+**Halo model** permette di scegliere **Wide** (primo riferimento) oppure
+**Classic** (secondo riferimento). Premere **Apply and save**: il cambio avviene
 senza riavviare l'app e conserva centro del quadrante, posizione, scala e opacità.
 La scelta viene salvata e ripristinata all'avvio. I profili precedenti usano Ampio.
 Entrambi i modelli mostrano le stesse telemetrie aggiornate del primo riferimento.
 
-**Profilo Halo** salva posizioni e dimensioni diverse con nomi scelti da te,
+**Halo profile** salva posizioni e dimensioni diverse con nomi scelti da te,
 per esempio **Ferrari** e **Red Bull**:
 
 1. Posiziona e ridimensiona Halo in Edit Mode, oppure compila X, Y e Scala nel pannello.
-2. Scrivi il nome in **Profilo Halo** e premi **Salva profilo**. Il comando applica
+2. Scrivi il nome in **Halo profile** e premi **Save profile**. Il comando applica
    posizione e scala e le salva subito.
-3. Per cambiare vettura, scegli un nome dall'elenco e premi **Carica profilo**.
+3. Per cambiare vettura, scegli un nome dall'elenco e premi **Load profile**.
 
 Salvare un nome già presente aggiorna quel profilo; maiuscole/minuscole e spazi
 esterni non creano duplicati. I nomi possono contenere fino a 64 caratteri.
-Spostare Halo conserva il profilo salvato: premi di nuovo **Salva profilo** per
+Spostare Halo conserva il profilo salvato: premi di nuovo **Save profile** per
 aggiornarlo. La scelta è manuale e l'ultimo nome usato resta selezionato al riavvio.
 I profili condividono il file impostazioni e conservano soltanto X, Y e Scala.
 Colori, modello Halo, opacità, visibilità e mini HUD pneumatici restano indipendenti.
@@ -136,8 +135,11 @@ Il quadrante centrale mostra velocità in km/h e percentuale ERS. La percentuale
 diventa azzurra quando Overtake è disponibile in zona, anche prima di attivare il
 boost, e torna bianca quando la disponibilità termina. Non compare una targhetta
 Overtake separata. Pedali a segmenti, Straight Mode e Active Aero sull'ala sinistra;
-marce e scala RPM seguono la curva dell'ala destra. Il riquadro a sinistra dei
-pedali mostra la marcia corrente; non viene simulato un numero di curva.
+marce e scala RPM seguono la curva dell'ala destra. Il piccolo riquadro **FUEL**
+a sinistra dei pedali mostra il margine carburante live del MFD rispetto alla
+distanza di gara rimanente, con segno e un decimale: **+ 2.3** oppure **- 0.8**.
+Il valore segue consumo e risparmio, senza sottrarre nuovamente i giri gara.
+Quando i dati non sono disponibili o recenti compare **--**.
 I 15 segmenti luminosi del quadrante conservano i bit dei LED di cambiata.
 Il colore iniziale degli archi è arancione ed è modificabile nel pannello.
 
@@ -145,10 +147,14 @@ Velocità in km/h, marcia immediata R/N/1–8, pedali effettivi, RPM e massimo R
 quando disponibile. I 15 LED usano i bit `m_revLightsBitValue`, bit 0 a sinistra.
 Active Aero e Overtake derivano dal pacchetto Car Telemetry 2; il campo DRS
 legacy non viene usato per rappresentarli. Con vetture pre-2026 compare N/A.
-La fascia sinistra mostra **SM ACTIVE** con fondo verde quando Straight Mode è
-effettivamente attivo e **SM IN-ACT** quando è spento. La sola disponibilità
-non viene confusa con l'attivazione. Il popup di disponibilità è sostituito dalla
-fascia. Senza dati recenti compare **SM --**; sulle vetture pre-2026 **SM N/A**.
+La fascia sinistra mostra **SM OFF** insieme alla distanza in metri comunicata
+dal gioco, aggiornata mentre ci si avvicina alla zona. Quando la disponibilità
+viene confermata compare **SM READY**; dopo l'attivazione compare **SM ON**
+con fondo verde. Una distanza pari a zero non implica disponibilità.
+Senza dati recenti compare **SM --**; sulle vetture pre-2026 **SM N/A**.
+Sotto la batteria compare la modalità ERS corrente: **NONE**, **MEDIUM**,
+**HOTLAP** oppure **BOOST**. La stessa scritta è rimossa da sotto Active Aero.
+Pannello impostazioni, menu, messaggi e diagnostica dell'app sono in inglese.
 Le scritte decorative HALO/26 e LIVE sono rimosse. Demo, attesa e anomalie
 conservano un'indicazione compatta, visibile soltanto quando necessaria.
 
@@ -172,7 +178,8 @@ ambiente `F1_25_DIR`. La lettura avviene sul thread ricezione, una volta per
 sessione e al cambio sorgente; non modifica né estrae file del gioco. Sono
 supportate le categorie F1 2025 e 2026 con capacità nominale uniforme tra vetture.
 In assenza di file compatibili o con capacità diverse tra vetture modificate,
-il display conserva MJ e `--%`. Non serve inserire una capacità nell'app.
+il display mostra l'energia in MJ al posto della percentuale, mantenendo la
+modalità ERS sotto il valore. Non serve inserire una capacità nell'app.
 La capacità nominale non misura eventuali riduzioni dinamiche dovute a usura,
 R&D o modifiche runtime. La Demo usa una capacità simulata separata di 4 000 000 J.
 Dettagli e comando di verifica: [lettura batteria](docs/BATTERY.md).
@@ -181,7 +188,7 @@ Dettagli e comando di verifica: [lettura batteria](docs/BATTERY.md).
 | --- | --- |
 | IN ATTESA UDP | Nessuna telemetria locale valida; gioco chiuso e UDP disattivato non sono distinguibili dalla sola rete |
 | LIVE | Telemetria valida e recente |
-| DEMO · DATI SIMULATI | Generatore interno esplicitamente attivo |
+| DEMO · SIMULATED DATA | Generatore interno esplicitamente attivo |
 | DATI OBSOLETI | Nessun Car Telemetry recente; valori guida sostituiti con `--` |
 | VETTURA NON ATTIVA | Lap Data indica Invalid o Inactive |
 | PAUSA | Pausa dichiarata nei pacchetti Session / Car Status |

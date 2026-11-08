@@ -1,6 +1,31 @@
-# Verifica locale — 6 novembre 2026
+# Local verification
 
-## Profili Halo con nome
+## ERS mode, Straight Mode countdown and fuel margin — 8 November 2026
+
+Release build, rustfmt, Clippy `--all-targets -D warnings`, all examples and
+**62 automated tests** passed. Tests cover the signed MFD fuel field at offset
+13, invalid floating-point values, deploy mode captions, negative zero,
+SM activation/availability priority, distance handling and demo round trips.
+
+Checked both Wide and Classic in the Windows app using synthetic UDP on a
+separate port and an isolated settings file:
+
+- The battery caption shows NONE, MEDIUM, HOTLAP or BOOST. The old ERS caption
+  beneath Active Aero is absent.
+- SM OFF updates from 350 m to 125 m; availability shows SM READY and activation
+  shows SM ON with a green background.
+- The small FUEL pod displays + 2.3, - 0.8 and + 12.3. The right gears/RPM band
+  remains available. Missing status clears fuel and ERS; expired telemetry
+  clears all live values and displays STALE DATA.
+- Settings, model choices, context menus, status messages and edit hints are
+  English. Switching Wide to Classic preserves X, Y, scale and opacity.
+
+The end-to-end run accepted 27,678 packets with zero malformed, unsupported
+or reordered packets, and zero presentation failures.
+[Diagnostic report](../artifacts/hud-fuel-sm-update-smoke.json).
+The check used synthetic data; a live F1 25 driving session remains unverified.
+
+## Profili Halo con nome — 6 novembre 2026
 
 Aggiunti il campo modificabile **Profilo Halo** e i comandi **Salva profilo** e
 **Carica profilo**. Ogni nome conserva X, Y e Scala; salvare un nome esistente lo

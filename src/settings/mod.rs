@@ -43,8 +43,8 @@ impl HaloModel {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Wide => "Ampio",
-            Self::Classic => "Classico",
+            Self::Wide => "Wide",
+            Self::Classic => "Classic",
         }
     }
 }
@@ -112,7 +112,7 @@ impl HaloProfile {
 
     fn validate(self) -> Result<(), String> {
         if !self.scale.is_finite() || !(0.35..=3.0).contains(&self.scale) {
-            return Err("Scala profilo Halo: intervallo 0.35–3.00".into());
+            return Err("Halo profile scale: range 0.35–3.00".into());
         }
         Ok(())
     }
@@ -121,7 +121,7 @@ impl HaloProfile {
 fn profile_name(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() || name.encode_utf16().count() > 64 || name.chars().any(char::is_control) {
-        return Err("Nome profilo: da 1 a 64 caratteri, senza caratteri di controllo.".into());
+        return Err("Profile name: 1 to 64 characters, without control characters.".into());
     }
     Ok(name)
 }
@@ -233,7 +233,7 @@ impl Settings {
         let profile = self
             .halo_profiles
             .get(&name)
-            .ok_or("Profilo non trovato. Scegli un nome salvato oppure usa Salva profilo.")?;
+            .ok_or("Profile not found. Choose a saved name or use Save profile.")?;
         profile.validate()?;
         profile.apply(&mut self.halo);
         self.active_halo_profile = Some(name.clone());
@@ -251,9 +251,9 @@ impl Settings {
         let ip = self
             .bind_ip
             .parse()
-            .map_err(|_| "IP di ascolto non valido".to_string())?;
+            .map_err(|_| "Invalid listening IP address".to_string())?;
         if self.port == 0 {
-            return Err("La porta deve essere tra 1 e 65535".into());
+            return Err("Port must be between 1 and 65535".into());
         }
         Ok(SocketAddr::new(ip, self.port))
     }
@@ -261,11 +261,11 @@ impl Settings {
     pub fn validate(&self) -> Result<(), String> {
         self.endpoint()?;
         if self.schema_version != 1 {
-            return Err("Versione impostazioni non supportata".into());
+            return Err("Unsupported settings version".into());
         }
         for (name, profile) in &self.halo_profiles {
             if profile_name(name)? != name {
-                return Err("Nome profilo salvato con spazi iniziali o finali.".into());
+                return Err("Saved profile name has leading or trailing spaces.".into());
             }
             profile.validate()?;
         }
@@ -274,14 +274,14 @@ impl Settings {
             .as_ref()
             .is_some_and(|name| !self.halo_profiles.contains_key(name))
         {
-            return Err("Il profilo Halo selezionato non esiste.".into());
+            return Err("The selected Halo profile does not exist.".into());
         }
         for layout in [self.halo, self.tyres] {
             if !layout.scale.is_finite() || !(0.35..=3.0).contains(&layout.scale) {
-                return Err("Scala HUD: intervallo 0.35–3.00".into());
+                return Err("HUD scale: range 0.35–3.00".into());
             }
             if !layout.opacity.is_finite() || !(0.15..=1.0).contains(&layout.opacity) {
-                return Err("Opacità HUD: intervallo 0.15–1.00".into());
+                return Err("HUD opacity: range 0.15–1.00".into());
             }
         }
         if !self.temperature_min_c.is_finite()
@@ -290,7 +290,7 @@ impl Settings {
             || self.temperature_max_c > 255.0
             || self.temperature_min_c >= self.temperature_max_c
         {
-            return Err("Temperature: minimo < massimo, tra 0 e 255 °C".into());
+            return Err("Temperature: minimum < maximum, between 0 and 255 °C".into());
         }
         if !self.wear_warning_percent.is_finite()
             || !self.wear_critical_percent.is_finite()
@@ -298,7 +298,7 @@ impl Settings {
             || self.wear_critical_percent > 100.0
             || self.wear_warning_percent >= self.wear_critical_percent
         {
-            return Err("Usura: attenzione < critica, tra 0 e 100%".into());
+            return Err("Wear: warning < critical, between 0 and 100%".into());
         }
         Ok(())
     }
@@ -307,9 +307,9 @@ impl Settings {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = fs::read_to_string(path).map_err(|e| format!("Lettura impostazioni: {e}"))?;
+        let content = fs::read_to_string(path).map_err(|e| format!("Reading settings: {e}"))?;
         let value: Self =
-            serde_json::from_str(&content).map_err(|e| format!("JSON impostazioni: {e}"))?;
+            serde_json::from_str(&content).map_err(|e| format!("Settings JSON: {e}"))?;
         value.validate()?;
         Ok(value)
     }
@@ -328,7 +328,7 @@ impl Settings {
                 .and_then(|_| file.sync_all())
                 .map_err(|e| e.to_string())?;
         }
-        replace_file(&temp, path).map_err(|e| format!("Salvataggio impostazioni: {e}"))
+        replace_file(&temp, path).map_err(|e| format!("Saving settings: {e}"))
     }
 }
 

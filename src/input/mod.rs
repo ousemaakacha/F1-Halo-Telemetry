@@ -13,7 +13,7 @@ pub fn parse_hotkey(text: &str) -> Result<(HOT_KEY_MODIFIERS, u32), String> {
             "WIN" => modifiers |= MOD_WIN,
             value => {
                 if key.is_some() {
-                    return Err("Hotkey: specificare un solo tasto".into());
+                    return Err("Hotkey: specify only one key".into());
                 }
                 let code = if value.len() == 1 && value.as_bytes()[0].is_ascii_alphanumeric() {
                     value.as_bytes()[0] as u32
@@ -24,24 +24,22 @@ pub fn parse_hotkey(text: &str) -> Result<(HOT_KEY_MODIFIERS, u32), String> {
                 {
                     VK_F1.0 as u32 + number - 1
                 } else {
-                    return Err(
-                        "Hotkey: usare Ctrl/Alt/Shift/Win + lettera, numero o F1–F24".into(),
-                    );
+                    return Err("Hotkey: use Ctrl/Alt/Shift/Win + letter, number or F1–F24".into());
                 };
                 key = Some(code);
             }
         }
     }
     if modifiers == MOD_NOREPEAT {
-        return Err("Hotkey: è richiesto almeno un modificatore".into());
+        return Err("Hotkey: at least one modifier is required".into());
     }
-    Ok((modifiers, key.ok_or("Hotkey: manca il tasto")?))
+    Ok((modifiers, key.ok_or("Hotkey: missing key")?))
 }
 
 pub fn parse_hotkeys(text: [&str; 2]) -> Result<[(HOT_KEY_MODIFIERS, u32); 2], String> {
     let keys = [parse_hotkey(text[0])?, parse_hotkey(text[1])?];
     if keys[0] == keys[1] {
-        return Err("Hotkey Edit e visibilità HUD devono essere diverse".into());
+        return Err("Edit and HUD visibility hotkeys must be different".into());
     }
     Ok(keys)
 }
@@ -75,7 +73,7 @@ pub fn register_hotkeys(
     for (index, parsed) in keys.into_iter().enumerate() {
         let result = parsed.and_then(|(modifiers, key)| {
             if index == 1 && duplicate {
-                return Err("Hotkey Edit e visibilità HUD devono essere diverse".into());
+                return Err("Edit and HUD visibility hotkeys must be different".into());
             }
             let binding = HotkeyBinding {
                 id: index as i32 + 1,
@@ -83,12 +81,8 @@ pub fn register_hotkeys(
                 key,
             };
             register(binding).map_err(|error| {
-                let label = if index == 0 {
-                    "Edit"
-                } else {
-                    "visibilità HUD"
-                };
-                format!("Hotkey {label} occupata o non disponibile: {error}")
+                let label = if index == 0 { "Edit" } else { "HUD visibility" };
+                format!("{label} hotkey is occupied or unavailable: {error}")
             })?;
             Ok(binding)
         });
@@ -146,17 +140,13 @@ pub fn replace_hotkeys(
                     .flatten()
                     .any(|binding| binding.id == *id)
             })
-            .expect("Al massimo quattro registrazioni hotkey");
+            .expect("At most four hotkey registrations");
         let binding = HotkeyBinding { id, modifiers, key };
         if let Err(error) = register(binding) {
             release_staged(current, next, &mut unregister);
-            let label = if index == 0 {
-                "Edit"
-            } else {
-                "visibilità HUD"
-            };
+            let label = if index == 0 { "Edit" } else { "HUD visibility" };
             return Err(format!(
-                "Hotkey {label} occupata o non disponibile: {error}"
+                "{label} hotkey is occupied or unavailable: {error}"
             ));
         }
         next[index] = Some(binding);
@@ -239,7 +229,7 @@ mod tests {
             .iter()
             .any(|old| (old.modifiers, old.key) == (binding.modifiers, binding.key))
         {
-            return Err("Combinazione già registrata da un'altra applicazione".into());
+            return Err("Shortcut already registered by another application".into());
         }
         registry.push(binding);
         Ok(())
@@ -262,12 +252,12 @@ mod tests {
             assert_eq!(*registry.borrow(), vec![external, available]);
             assert_eq!(errors.len(), 1);
             assert!(errors[0].contains(if occupied == 0 {
-                "Edit occupata"
+                "Edit hotkey is occupied"
             } else {
-                "visibilità HUD occupata"
+                "HUD visibility hotkey is occupied"
             }));
             let failure = replace(&registry, bindings, ["Alt+H", "Alt+O"], || {
-                Err("Salvataggio fallito".into())
+                Err("Save failed".into())
             });
             assert!(failure.is_err());
             assert_eq!(*registry.borrow(), vec![external, available]);
@@ -284,7 +274,7 @@ mod tests {
         assert!(bindings[1].is_none());
         assert_eq!(
             errors,
-            vec!["Hotkey Edit e visibilità HUD devono essere diverse"]
+            vec!["Edit and HUD visibility hotkeys must be different"]
         );
     }
 
@@ -308,7 +298,7 @@ mod tests {
             panic!("Apply must not run")
         })
         .unwrap_err();
-        assert!(error.contains("visibilità HUD occupata"));
+        assert!(error.contains("HUD visibility hotkey is occupied"));
         assert_eq!(
             *registry.borrow(),
             vec![old[0].unwrap(), old[1].unwrap(), external]
@@ -326,10 +316,10 @@ mod tests {
         )
         .unwrap();
         let error = replace(&registry, old, ["Alt+H", "Alt+O"], || {
-            Err("Salvataggio fallito".into())
+            Err("Save failed".into())
         })
         .unwrap_err();
-        assert_eq!(error, "Salvataggio fallito");
+        assert_eq!(error, "Save failed");
         assert_eq!(*registry.borrow(), vec![old[0].unwrap(), old[1].unwrap()]);
     }
 

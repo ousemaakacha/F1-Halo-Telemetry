@@ -57,12 +57,18 @@ Offset relativi all'inizio del record vettura:
 | Pacchetto | Campi usati e offset |
 | --- | --- |
 | Car Telemetry | speed u16=0; throttle f32=2; brake f32=10; gear i8=15; RPM u16=16; rev%=19; LED u16=20; surface[4] u8=30; inner[4] u8=34 |
-| Car Status | maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvest limit f32=50; networkPaused u8=58 |
+| Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvest limit f32=50; networkPaused u8=58 |
 | Car Damage | wear[4] f32=0,4,8,12 |
 | Car Telemetry 2 | aeroMode u8=0; aeroAvailable u8=1; aeroDistance u16=2; overtakeAvailable u8=4; overtakeActive u8=5; overtakeDistance u16=6; regulations2026 u8=8 |
 | Lap Data | resultStatus u8=45 |
 
 Session usa gamePaused a offset corpo 14 e formula a offset corpo 8.
+Il carburante usa direttamente `m_fuelRemainingLaps`, il valore del MFD:
+non viene sottratta di nuovo la distanza gara. Sono ammessi valori negativi
+finiti. Straight Mode usa prima `activeAeroMode` per **SM ON**, poi
+`activeAeroAvailable` per **SM READY**; altrimenti mostra **SM OFF** con
+`activeAeroActivationDistance` soltanto se maggiore di zero. Zero significa
+assenza di una distanza di attivazione, non conferma di ingresso in zona.
 Participants legge numActiveCars a offset assoluto 29. Non presume che gli slot
 validi siano contigui: l'attività locale è verificata con resultStatus.
 

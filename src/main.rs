@@ -12,5 +12,5 @@ fn main() {
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("F1 Halo Telemetry richiede Windows 11 x64. Parser e test sono multipiattaforma.");
+    eprintln!("F1 Halo Telemetry requires Windows 11 x64. Parser and tests are cross-platform.");
 }

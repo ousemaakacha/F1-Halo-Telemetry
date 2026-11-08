@@ -40,9 +40,25 @@ fn ers_colour(aero: Option<Aero>) -> [u8; 3] {
 fn straight_mode_label(aero: Option<Aero>) -> &'static str {
     match aero {
         Some(a) if !a.regulations_2026 => "SM N/A",
-        Some(a) if a.straight => "SM ACTIVE",
-        Some(_) => "SM IN-ACT",
+        Some(a) if a.straight => "SM ON",
+        Some(a) if a.available => "SM READY",
+        Some(_) => "SM OFF",
         None => "SM --",
+    }
+}
+
+fn straight_mode_distance(aero: Option<Aero>) -> Option<u16> {
+    aero.filter(|a| {
+        a.regulations_2026 && !a.straight && !a.available && a.activation_distance_m > 0
+    })
+    .map(|a| a.activation_distance_m)
+}
+
+fn draw_straight_mode(p: &Painter<'_>, aero: Option<Aero>, bounds: D2D_RECT_F, rgb: [u8; 3]) {
+    if let Some(distance) = straight_mode_distance(aero) {
+        p.textf(format_args!("SM OFF  {distance} m"), bounds, HudNumber, rgb);
+    } else {
+        p.text(straight_mode_label(aero), bounds, HudNumber, rgb);
     }
 }
 
@@ -57,12 +73,22 @@ fn aero_state(aero: Option<Aero>, settings: &Settings) -> (&'static str, [u8; 3]
 
 fn deploy_label(status: Option<CarStatus>) -> &'static str {
     match status.map(|s| s.deploy_mode) {
-        Some(0) => "ERS / NONE",
-        Some(1) => "ERS / MEDIUM",
-        Some(2) => "ERS / HOTLAP",
-        Some(3) => "ERS / BOOST",
-        _ => "ERS / --",
+        Some(0) => "NONE",
+        Some(1) => "MEDIUM",
+        Some(2) => "HOTLAP",
+        Some(3) => "BOOST",
+        _ => "--",
     }
+}
+
+fn fuel_margin(status: Option<CarStatus>) -> Option<f32> {
+    status
+        .map(|s| s.fuel_remaining_laps)
+        .filter(|v| v.is_finite())
+}
+
+fn fuel_sign(laps: f32) -> &'static str {
+    if laps <= -0.05 { "-" } else { "+" }
 }
 
 fn rpm_fraction(tel: Option<CarTelemetry>, status: Option<CarStatus>) -> Option<f32> {
@@ -229,24 +255,22 @@ impl Halo {
                 HudSecondary,
                 energy_colour,
             );
+        } else if let Some(s) = status {
+            p.textf(
+                format_args!("{:.2} MJ", s.ers_joules / 1_000_000.0),
+                rect(365.0, 105.0, 110.0, 29.0),
+                HudNumber,
+                energy_colour,
+            );
         } else {
             p.text("--%", rect(365.0, 105.0, 110.0, 29.0), HudSecondary, MUTED);
         }
-        if let Some(s) = status.filter(|_| percentage.is_none()) {
-            p.textf(
-                format_args!("ERS / {:.2} MJ", s.ers_joules / 1_000_000.0),
-                rect(361.0, 132.0, 118.0, 13.0),
-                HudLabel,
-                energy_colour,
-            );
-        } else {
-            p.text(
-                "ERS",
-                rect(389.0, 132.0, 62.0, 13.0),
-                HudLabel,
-                energy_colour,
-            );
-        }
+        p.text(
+            deploy_label(status),
+            rect(361.0, 132.0, 118.0, 13.0),
+            HudLabel,
+            energy_colour,
+        );
 
         for (x, label, value, rgb) in [
             (294.0, "BRAKE", tel.map(|t| t.brake), settings.colours.brake),
@@ -284,7 +308,7 @@ impl Halo {
             });
         }
 
-        // No corner-number feed is available; this pod shows the actual gear.
+        // The MFD fuel margin already accounts for the remaining race distance.
         p.rotated(
             (260.0, 123.0),
             if is_classic { -13.0 } else { halo_angle(260.0) },
@@ -292,13 +316,18 @@ impl Halo {
                 let pod = rect(230.0, 87.0, 59.0, 74.0);
                 p.rounded(pod, 10.0, INK, 0.9);
                 p.rounded_outline(pod, 10.0, EDGE, 0.9, 0.9);
-                p.text("GEAR", rect(230.0, 96.0, 59.0, 17.0), HudLabel, MUTED);
-                p.text(
-                    tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
-                    rect(230.0, 112.0, 59.0, 43.0),
-                    HudSpeed,
-                    if active { WHITE } else { MUTED },
-                );
+                p.text("FUEL", rect(230.0, 96.0, 59.0, 17.0), HudLabel, MUTED);
+                let value = rect(232.0, 112.0, 55.0, 39.0);
+                if let Some(laps) = fuel_margin(status) {
+                    p.textf(
+                        format_args!("{} {:.1}", fuel_sign(laps), laps.abs()),
+                        value,
+                        HudFuel,
+                        WHITE,
+                    );
+                } else {
+                    p.text("--", value, HudFuel, MUTED);
+                }
             },
         );
 
@@ -353,10 +382,10 @@ impl Halo {
         );
         let sm_y = halo_band_edge(124.0, -55.0);
         p.rotated((124.0, sm_y), halo_band_angle(124.0, -55.0), |p| {
-            p.text(
-                straight_mode_label(aero),
+            draw_straight_mode(
+                p,
+                aero,
                 rect(43.0, sm_y - 13.0, 162.0, 26.0),
-                HudNumber,
                 if sm_active {
                     INK
                 } else if aero.is_some() {
@@ -383,17 +412,6 @@ impl Halo {
                 );
             });
         }
-        let deploy = deploy_label(status);
-        let deploy_y = halo_band_edge(124.0, 3.0);
-        p.rotated((124.0, deploy_y), halo_band_angle(124.0, 3.0), |p| {
-            p.text(
-                deploy,
-                rect(51.5, deploy_y - 7.5, 145.0, 15.0),
-                HudLabel,
-                MUTED,
-            );
-        });
-
         p.geometry(&self.gear_band, INK, 0.9);
         p.stroke_geometry(&self.gear_band, EDGE, 0.9, 0.85);
         let heading_y = halo_band_edge(690.0, -61.0);
@@ -641,18 +659,33 @@ mod tests {
     }
 
     #[test]
-    fn straight_mode_text_uses_engagement_instead_of_availability() {
+    fn straight_mode_prioritises_engagement_then_availability() {
         for available in [false, true] {
             for straight in [false, true] {
                 let aero = Aero {
                     regulations_2026: true,
                     available,
                     straight,
+                    activation_distance_m: 350,
                     ..Aero::default()
                 };
                 assert_eq!(
                     straight_mode_label(Some(aero)),
-                    if straight { "SM ACTIVE" } else { "SM IN-ACT" }
+                    if straight {
+                        "SM ON"
+                    } else if available {
+                        "SM READY"
+                    } else {
+                        "SM OFF"
+                    }
+                );
+                assert_eq!(
+                    straight_mode_distance(Some(aero)),
+                    if straight || available {
+                        None
+                    } else {
+                        Some(350)
+                    }
                 );
                 assert_eq!(
                     straight_mode_label(Some(Aero {
@@ -661,9 +694,70 @@ mod tests {
                     })),
                     "SM N/A"
                 );
+                assert_eq!(
+                    straight_mode_distance(Some(Aero {
+                        regulations_2026: false,
+                        ..aero
+                    })),
+                    None
+                );
             }
         }
         assert_eq!(straight_mode_label(None), "SM --");
+        assert_eq!(straight_mode_distance(None), None);
+        let unavailable = Some(Aero {
+            regulations_2026: true,
+            ..Aero::default()
+        });
+        assert_eq!(straight_mode_label(unavailable), "SM OFF");
+        assert_eq!(straight_mode_distance(unavailable), None);
+    }
+
+    #[test]
+    fn fuel_margin_uses_live_mfd_delta_and_formats_small_deficits_without_negative_zero() {
+        for (laps, expected) in [
+            (2.3, "+ 2.3"),
+            (-0.8, "- 0.8"),
+            (0.0, "+ 0.0"),
+            (-0.0, "+ 0.0"),
+            (-0.04, "+ 0.0"),
+            (-0.05, "- 0.1"),
+            (12.3, "+ 12.3"),
+        ] {
+            let status = Some(CarStatus {
+                fuel_remaining_laps: laps,
+                ..CarStatus::default()
+            });
+            let actual = fuel_margin(status).unwrap();
+            assert_eq!(
+                format!("{} {:.1}", fuel_sign(actual), actual.abs()),
+                expected
+            );
+        }
+        assert_eq!(fuel_margin(None), None);
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(
+                fuel_margin(Some(CarStatus {
+                    fuel_remaining_laps: invalid,
+                    ..CarStatus::default()
+                })),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn battery_caption_shows_only_the_current_deploy_mode() {
+        for (mode, expected) in [(0, "NONE"), (1, "MEDIUM"), (2, "HOTLAP"), (3, "BOOST")] {
+            assert_eq!(
+                deploy_label(Some(CarStatus {
+                    deploy_mode: mode,
+                    ..CarStatus::default()
+                })),
+                expected
+            );
+        }
+        assert_eq!(deploy_label(None), "--");
     }
 
     #[test]

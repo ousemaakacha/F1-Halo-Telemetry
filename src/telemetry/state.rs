@@ -21,14 +21,14 @@ pub enum Connection {
 impl Connection {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Waiting | Self::Listening => "IN ATTESA UDP",
+            Self::Waiting | Self::Listening => "WAITING FOR UDP",
             Self::Live => "LIVE",
-            Self::Demo => "DEMO · DATI SIMULATI",
-            Self::Stale => "DATI OBSOLETI",
-            Self::BindError => "ERRORE PORTA UDP",
-            Self::Unsupported => "FORMATO NON SUPPORTATO",
-            Self::Inactive => "VETTURA NON ATTIVA",
-            Self::Paused => "PAUSA",
+            Self::Demo => "DEMO · SIMULATED DATA",
+            Self::Stale => "STALE DATA",
+            Self::BindError => "UDP PORT ERROR",
+            Self::Unsupported => "UNSUPPORTED FORMAT",
+            Self::Inactive => "CAR INACTIVE",
+            Self::Paused => "PAUSED",
         }
     }
 }

@@ -372,7 +372,7 @@ impl BatteryCatalog {
             if uniform.is_none() && !records.is_empty() {
                 catalog
                     .errors
-                    .push(format!("{year}: capacità ERS differenti tra vetture"));
+                    .push(format!("{year}: ERS capacities differ between cars"));
             }
         }
         catalog
