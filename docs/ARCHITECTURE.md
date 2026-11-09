@@ -26,6 +26,19 @@ di una struttura piccola; le misure locali sono nel documento di verifica.
 
 ## Rendering e composizione
 
+Il mini HUD pneumatici usa `assets/tyre-car.png`, incorporato nell'eseguibile.
+Windows Imaging Component decodifica il PNG in BGRA premoltiplicato una volta
+per device. Direct2D riutilizza la bitmap, conserva le proporzioni verticali
+e la ricrea insieme alle altre risorse grafiche dopo un reset.
+
+`HaloModel` seleziona Wide, Classic o Modern sullo stesso canvas 1000 × 300.
+Modern usa una fascia continua con estremità curve e un gradiente Direct2D;
+il brush viene creato con la superficie e riutilizzato, compresi i reset del
+device. Geometrie e arco RPM restano in cache. Il quadrante condiviso viene
+scalato intorno allo stesso centro, mentre Fuel e indicatori laterali usano una
+disposizione integrata. La logica live di ERS, Fuel e Straight Mode è comune a
+tutti i modelli. Il cambio di modello conserva layout e profili nominati.
+
 Un device Direct3D 11 hardware con BGRA support è condiviso dalle due superfici.
 Ogni HUD ha una swap chain composition BGRA8, due buffer, alpha premoltiplicato,
 flip sequential e latenza massima di coda 1. Direct2D disegna direttamente sul
@@ -99,6 +112,30 @@ procedure usano dati con interior mutability e accodano azioni: non rientrano
 con un riferimento mutabile al controller durante le chiamate Win32.
 
 Il pannello usa EDIT, BUTTON, COMBOBOX, STATIC e scrollbar Win32 standard.
+`panel/layout` conserva una geometria comune per HWND e decorazioni GDI:
+tre colonne da 1120 unità logiche, comandi generali sotto le impostazioni sotto
+tale larghezza, categorie in alto sotto 850 e riquadri su una colonna quando
+la zona centrale è inferiore a 580. `WM_SIZE` applica il layout direttamente
+tramite stato con Cell e `DeferWindowPos`, anche nel loop modale del trascinamento.
+Una guardia evita rientri quando la comparsa delle scrollbar cambia il client.
+`WS_OVERLAPPEDWINDOW` abilita bordi, angoli, ingrandimento e ripristino;
+`WM_GETMINMAXINFO` adatta i limiti minimi al DPI e all'area del monitor.
+La navigazione da tastiera riporta in vista il controllo che riceve il focus.
+La diagnostica usa un EDIT multilinea di sola lettura e conserva la posizione
+di scorrimento durante gli aggiornamenti.
+La skin navy/ciano è disegnata con GDI in `app/panel/theme`: font e brush sono
+posseduti dal pannello e rilasciati alla chiusura o al cambio DPI. I controlli
+mantengono semantica, input e navigazione tastiera Win32; subclass e owner draw
+personalizzano pulsanti, interruttori e combobox. Le sei categorie mostrano o
+nascondono gli stessi HWND, conservando i valori non applicati; comandi rapidi,
+stato e salvataggio restano comuni. Il tema riceve soltanto uno stato immutabile
+con selezione tramite Cell; i comandi continuano a passare dalla coda azioni.
+I pulsanti usano `BS_OWNERDRAW` / `WM_DRAWITEM`; le combobox disegnano contenuto
+e cornice nello stesso ciclo di paint, preservando lo stato del DC. L'hover
+invalida soltanto il controllo all'ingresso e all'uscita. I campi di testo
+ridisegnano la cornice al cambio focus, e i colori aggiornano solo il campione.
+Anche gli HUD DirectComposition completano `BeginPaint` / `EndPaint` per
+scaricare le richieste di ridisegno Windows, comprese quelle a HUD nascosti.
 Supporta tastiera tramite IsDialogMessage e layout DPI per monitor. È topmost
 quando visibile per evitare che gli HUD coprano i controlli. Chiuso, non riceve
 ridisegni periodici o aggiornamenti delle etichette. Non introduce un secondo

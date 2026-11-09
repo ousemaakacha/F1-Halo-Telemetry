@@ -14,7 +14,9 @@ use windows::{
             DirectComposition::*,
             DirectWrite::*,
             Dxgi::{Common::*, *},
+            Imaging::*,
         },
+        System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
     },
     core::{Interface, Result, w},
 };
@@ -56,9 +58,12 @@ pub enum Font {
     HudSpeed,
     HudSecondary,
     HudFuel,
+    TyreTitle,
+    TyreLabel,
+    TyreWear,
 }
 
-const FONT_COUNT: usize = 11;
+const FONT_COUNT: usize = 14;
 
 impl Font {
     fn index(self) -> usize {
@@ -128,13 +133,13 @@ impl Graphics {
                 font.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
                 Ok(font)
             };
-            let gear_format = make(102.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?;
-            gear_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
-            let hud = |size| -> Result<IDWriteTextFormat> {
-                let font = make(size, DWRITE_FONT_WEIGHT_BOLD, true)?;
+            let centered = |size, weight, numeric| -> Result<IDWriteTextFormat> {
+                let font = make(size, weight, numeric)?;
                 font.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
                 Ok(font)
             };
+            let gear_format = centered(102.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?;
+            let hud = |size| centered(size, DWRITE_FONT_WEIGHT_BOLD, true);
             let formats = [
                 make(11.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, false)?,
                 make(14.0, DWRITE_FONT_WEIGHT_MEDIUM, false)?,
@@ -147,6 +152,9 @@ impl Graphics {
                 hud(36.0)?,
                 hud(27.0)?,
                 hud(17.0)?,
+                make(18.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, false)?,
+                centered(14.0, DWRITE_FONT_WEIGHT_MEDIUM, false)?,
+                centered(31.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?,
             ];
             let gpu = GpuTimer::new(&device).ok();
             Ok(Self {
@@ -203,6 +211,7 @@ impl Graphics {
             target.SetRoot(&visual)?;
             self.composition.Commit()?;
             let brush = context.CreateSolidColorBrush(&colour(WHITE, 1.0), None)?;
+            let material = material_brush(&context)?;
             Ok(Surface {
                 chain,
                 context,
@@ -212,11 +221,32 @@ impl Graphics {
                 opacity_effect,
                 composition: self.composition.clone(),
                 brush,
+                material,
                 formats: self.formats.clone(),
                 width,
                 height,
                 opacity: -1.0,
             })
+        }
+    }
+
+    pub fn bitmap(&self, png: &'static [u8]) -> Result<ID2D1Bitmap1> {
+        // Decode/upload once per device; the embedded bytes outlive the WIC stream.
+        unsafe {
+            let factory: IWICImagingFactory =
+                CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+            let stream = factory.CreateStream()?;
+            stream.InitializeFromMemory(png)?;
+            let decoder = factory.CreateDecoderFromStream(
+                &stream,
+                std::ptr::null(),
+                WICDecodeMetadataCacheOnLoad,
+            )?;
+            let source =
+                WICConvertBitmapSource(&GUID_WICPixelFormat32bppPBGRA, &decoder.GetFrame(0)?)?;
+            self.d2d
+                .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?
+                .CreateBitmapFromWicBitmap(&source, None)
         }
     }
 
@@ -252,6 +282,38 @@ unsafe fn target_bitmap(
     }
 }
 
+fn material_brush(context: &ID2D1DeviceContext) -> Result<ID2D1LinearGradientBrush> {
+    unsafe {
+        let target: ID2D1RenderTarget = context.cast()?;
+        let stops = target.CreateGradientStopCollection(
+            &[
+                D2D1_GRADIENT_STOP {
+                    position: 0.0,
+                    color: colour([36, 42, 49], 0.98),
+                },
+                D2D1_GRADIENT_STOP {
+                    position: 0.48,
+                    color: colour([23, 29, 36], 0.98),
+                },
+                D2D1_GRADIENT_STOP {
+                    position: 1.0,
+                    color: colour([12, 17, 23], 0.98),
+                },
+            ],
+            D2D1_GAMMA_2_2,
+            D2D1_EXTEND_MODE_CLAMP,
+        )?;
+        context.CreateLinearGradientBrush(
+            &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                startPoint: Vector2 { X: 0.0, Y: 65.0 },
+                endPoint: Vector2 { X: 0.0, Y: 255.0 },
+            },
+            None,
+            &stops,
+        )
+    }
+}
+
 pub struct Surface {
     chain: IDXGISwapChain1,
     context: ID2D1DeviceContext,
@@ -261,6 +323,7 @@ pub struct Surface {
     opacity_effect: IDCompositionEffectGroup,
     composition: IDCompositionDevice,
     brush: ID2D1SolidColorBrush,
+    material: ID2D1LinearGradientBrush,
     formats: [IDWriteTextFormat; FONT_COUNT],
     pub width: u32,
     pub height: u32,
@@ -318,6 +381,7 @@ impl Surface {
         Ok(Painter {
             context: &self.context,
             brush: &self.brush,
+            material: &self.material,
             formats: &self.formats,
         })
     }
@@ -336,10 +400,29 @@ impl Surface {
 pub struct Painter<'a> {
     context: &'a ID2D1DeviceContext,
     brush: &'a ID2D1SolidColorBrush,
+    material: &'a ID2D1LinearGradientBrush,
     formats: &'a [IDWriteTextFormat; FONT_COUNT],
 }
 
 impl Painter<'_> {
+    pub fn bitmap(&self, bitmap: &ID2D1Bitmap1, destination: D2D_RECT_F) {
+        unsafe {
+            self.context.DrawBitmap(
+                bitmap,
+                Some(&destination),
+                1.0,
+                D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+                None,
+                None,
+            );
+        }
+    }
+
+    pub fn material_geometry(&self, geometry: &ID2D1PathGeometry) {
+        unsafe {
+            self.context.FillGeometry(geometry, self.material, None);
+        }
+    }
     fn brush(&self, rgb: [u8; 3], opacity: f32) {
         // SAFETY: mutable native brush is confined to this thread and draw pass.
         unsafe {
@@ -400,6 +483,23 @@ impl Painter<'_> {
             self.context.GetTransform(&mut previous);
             self.context
                 .SetTransform(&(Matrix3x2::translation(offset.0, offset.1) * previous));
+            draw(self);
+            self.context.SetTransform(&previous);
+        }
+    }
+    pub fn scaled(&self, centre: (f32, f32), scale: f32, draw: impl FnOnce(&Self)) {
+        unsafe {
+            let mut previous = Matrix3x2::default();
+            self.context.GetTransform(&mut previous);
+            self.context.SetTransform(
+                &(Matrix3x2 {
+                    M11: scale,
+                    M22: scale,
+                    M31: centre.0 * (1.0 - scale),
+                    M32: centre.1 * (1.0 - scale),
+                    ..Default::default()
+                } * previous),
+            );
             draw(self);
             self.context.SetTransform(&previous);
         }

@@ -1,0 +1,44 @@
+{
+  "Dimensions": "2172 x 724",
+  "RGBUnchanged": true,
+  "OutsideRightCornerUnchanged": true,
+  "ChangedAlphaPixels": 17864,
+  "MirroredCornerMeasurements": [
+    {
+      "Y": 480,
+      "Left": 299,
+      "Right": 1872,
+      "DeviationPixels": 0
+    },
+    {
+      "Y": 500,
+      "Left": 294,
+      "Right": 1877,
+      "DeviationPixels": 0
+    },
+    {
+      "Y": 520,
+      "Left": 289,
+      "Right": 1882,
+      "DeviationPixels": 0
+    },
+    {
+      "Y": 540,
+      "Left": 284,
+      "Right": 1887,
+      "DeviationPixels": 0
+    },
+    {
+      "Y": 560,
+      "Left": 280,
+      "Right": 1891,
+      "DeviationPixels": 0
+    },
+    {
+      "Y": 580,
+      "Left": 279,
+      "Right": 1892,
+      "DeviationPixels": 0
+    }
+  ]
+}

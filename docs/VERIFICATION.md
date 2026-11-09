@@ -1,5 +1,138 @@
 # Local verification
 
+## Responsive Settings window — 9 November 2026
+
+Settings now supports dragging native window edges and corners, maximizing,
+restoring and Windows snapping. Initial size fits the monitor under the pointer.
+Controls and GDI decoration use the same responsive geometry: general controls
+move below the settings in portrait-width windows, categories move to the top
+in compact windows, and setting tiles stack when necessary. Fonts retain their
+DPI size; scrolling and focus visibility keep all controls accessible.
+
+All **67 tests**, rustfmt, Clippy `--all-targets -D warnings` and Release build
+passed. Layout checks cover nine viewport shapes down to 320 logical pixels.
+The native test resizes all six categories across landscape, portrait and narrow
+windows, including 1920 × 1040, 1080 × 1800, 720 × 1100 and 360 × 700, with
+96/144/192 DPI paths. It checks control bounds and overlaps, keyboard focus
+visibility, diagnostic scroll preservation and retention of unsaved settings.
+
+In the Windows app, dragged the bottom-right corner and left edge to narrow
+portrait-shaped windows, reached all bottom commands with the scrollbar, and
+maximized back to the full landscape screen. The earlier hover regression
+checks still pass. Physical monitor rotation and a live F1 driving session
+were not performed.
+
+## Titolo, usura generale e colonne simmetriche — 9 November 2026
+
+Il titolo è ora **TYRES**, da 14 a 18 px. La legenda inferiore è rimossa e
+la percentuale in alto sostituisce l'etichetta della modalità temperature.
+Il valore è la media delle quattro gomme e diventa `--%` senza usura recente.
+Etichette, percentuali e temperature sono centrate in colonne da 82 unità,
+con margini speculari rispetto all'immagine centrale.
+
+Build Release, rustfmt, Clippy `--all-targets -D warnings` e **65 test** passati.
+Il nuovo test copre media, estremi e dati assenti. Verificata la finestra nativa
+senza telemetria e con UDP sintetico: 13%, 15%, 18% e 22% producono **17%**.
+Prova di 75 secondi: 707 frame, una ricreazione del device e zero errori
+di presentazione. [Report](../artifacts/tyre-layout-smoke.json).
+Non è stata eseguita una sessione nel gioco.
+
+## Immagine auto nel mini HUD pneumatici — 9 November 2026
+
+Sostituita la sagoma geometrica con il PNG verticale fornito, incorporato
+nell'eseguibile senza modificare il file originale. L'immagine conserva le
+proporzioni e lascia leggibili usura e temperature dei quattro pneumatici.
+
+Build Release, rustfmt, Clippy `--all-targets -D warnings` e **64 test** passati.
+Controllata la finestra nativa al 100%, anche dopo la ricreazione delle risorse.
+Demo di 90 secondi al 170%: **5.367 frame**, una ricreazione del device,
+zero errori di presentazione. [Report](../artifacts/tyre-car-smoke.json).
+La verifica usa dati Demo; non include una sessione nel gioco.
+
+## Settings hover and repaint loop — 9 November 2026
+
+Fixed the Settings hover redraw: moving within an unchanged control no longer
+invalidates the panel. Push buttons use the native owner-draw callback, and
+combobox content and chrome share one paint cycle with DC state restored.
+Checkboxes retain their native keyboard and accessibility behaviour.
+
+The native regression test failed before the fix when mouse movement over
+Halo X invalidated the whole panel. It now checks inputs, buttons, switches
+and comboboxes, repeated mouse moves, and printed control skin/captions.
+All **64 tests**, rustfmt, Clippy `--all-targets -D warnings` and Release build
+passed. Checked category navigation and opening/closing the temperature menu
+in the Windows app.
+
+Also fixed a repeating paint queue from hidden composition HUDs by completing
+their `BeginPaint` / `EndPaint` cycle. A diagnostic run counted **49,098**
+overlay paint messages in three seconds before the fix; the fixed five-second
+run processed **two**, one per HUD. In the same hidden-HUD Demo scenario,
+sampled CPU fell from approximately **99% to 1.6% of one logical core**.
+The temporary tracing code was removed before packaging.
+[Verification record](../artifacts/settings-hover-verification.json).
+
+A live F1 driving session was not run for this UI correction.
+
+## Navy / cyan Settings UI — 8 November 2026
+
+Restyled the native Settings panel with a category sidebar, outlined settings
+panels, cyan selections and switches, and a persistent general-controls pane.
+All existing fields and commands remain available across six categories.
+The palette and panel arrangement follow the supplied visual reference.
+
+Release build, rustfmt, Clippy `--all-targets -D warnings` and all **64 tests**
+passed. The new native panel test clicks every category through the Win32
+command queue, checks which controls are visible, changes DPI through 144,
+192 and 96, and verifies that unsaved IP, temperature, colour, shortcut,
+profile name and rear-view values survive. Checked the Layout page visually
+in the Windows application, including custom comboboxes and switches.
+
+A 15-second Release Demo run rendered **882 unique telemetry frames**, with
+one forced device recreation and **zero presentation failures**. The saved
+test configuration remained byte-for-byte unchanged, and both HUDs retained
+topmost, click-through and no-activation flags.
+[Runtime report](../artifacts/settings-ui-smoke.json).
+
+A live F1 driving session and physical DPI transitions between monitors were
+not checked for this Settings-only change.
+
+## Modern pedal inclination — 8 November 2026
+
+Modern Brake and Throttle bars now rotate by -9° and +9° around centres at
+equal distances from the central dial. Segment dimensions and vertical pivots
+are identical; labels rotate with the bars. Pedal values remain independent.
+Release build, rustfmt, Clippy `--all-targets -D warnings` and all **63 tests**
+passed. Checked the regenerated native-renderer preview; no live driving run
+was performed for this visual adjustment.
+
+## Modern Halo model — 8 November 2026
+
+Added **modern** to **Halo model**, alongside Wide and Classic. It follows the
+attached reference with one shaded charcoal ribbon, curved ends, a thin upper
+arch, an orange lower edge, a larger central dial and integrated fuel/SM/Aero
+and gears/RPM. The gradient brush is cached per surface. All telemetry remains
+live and shares the existing freshness, missing-data and ERS/SM rules.
+
+Release build, rustfmt, Clippy `--all-targets -D warnings` and **63 automated
+tests** passed. The new geometry check covers symmetry, curved end caps,
+canvas bounds and room for gear labels; the existing settings round trip now
+includes Modern. The regenerated Wide and Classic exports match their previous
+PNG pixels exactly.
+
+Selected modern from the native dropdown and used Apply and save on an isolated
+configuration. Model persisted as Modern; Halo/tyre layouts, opacity and named
+profiles were retained. Relaunch restored Modern with no presentation errors.
+[Restart report](../artifacts/halo-modern-restart.json).
+
+A 20-second Release Demo run rendered **1,183 unique telemetry frames** with
+one forced device recreation and **zero presentation failures**. Both HUDs
+retained click-through, topmost and no-activation flags.
+[Runtime report](../artifacts/halo-modern-smoke.json).
+
+The 4000 × 1200 PNG preview comes directly from the same Direct2D renderer with
+fixed example telemetry. A live driving session and alignment with the user's
+camera remain unverified.
+
 ## ERS mode, Straight Mode countdown and fuel margin — 8 November 2026
 
 Release build, rustfmt, Clippy `--all-targets -D warnings`, all examples and

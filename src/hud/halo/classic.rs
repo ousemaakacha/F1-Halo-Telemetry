@@ -144,7 +144,7 @@ impl Classic {
     }
 }
 
-fn bezier_path(
+pub(super) fn bezier_path(
     factory: &ID2D1Factory1,
     start: (f32, f32),
     curves: &[[(f32, f32); 3]],

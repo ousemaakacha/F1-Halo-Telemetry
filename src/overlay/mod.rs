@@ -408,7 +408,10 @@ unsafe extern "system" fn window_proc(
             }
             WM_ERASEBKGND => return LRESULT(1),
             WM_PAINT => {
-                let _ = ValidateRect(Some(hwnd), None);
+                // Complete the paint cycle even though DirectComposition draws the HUD.
+                let mut paint = PAINTSTRUCT::default();
+                let _ = BeginPaint(hwnd, &mut paint);
+                let _ = EndPaint(hwnd, &paint);
                 push(Action::Dirty);
                 return LRESULT(0);
             }

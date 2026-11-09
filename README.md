@@ -97,11 +97,23 @@ i campi del pannello richiedono **Apply and save**. **Reset layout** agisce
 subito sul layout. **Default settings** carica i valori nel pannello e richiede
 poi Applica. Telemetria e ricezione continuano durante la modifica.
 
-**Halo model** permette di scegliere **Wide** (primo riferimento) oppure
-**Classic** (secondo riferimento). Premere **Apply and save**: il cambio avviene
+Il pannello **Software settings** usa una palette blu scuro e ciano, con le
+categorie **Halo & layout**, **Tyres**, **Colours**, **Connection**, **Shortcuts**
+e **Diagnostics** nella barra laterale. I comandi rapidi, la sorgente Demo, il
+frame rate e lo stato della sessione restano a destra nelle finestre ampie e
+passano sotto le impostazioni nei formati più stretti. Cambiare categoria conserva
+le modifiche non ancora applicate; **Apply and save** salva tutti i campi.
+I colori mostrano un campione accanto al valore esadecimale.
+
+**Halo model** permette di scegliere **Wide**, **Classic** oppure **modern**.
+Modern segue il nuovo riferimento: fascia antracite continua con gradiente,
+estremità arrotondate, bordo arancione, arco superiore sottile e quadrante più
+grande. Fuel, Straight Mode, Active Aero e marce restano integrati nella fascia.
+Premere **Apply and save**: il cambio avviene
 senza riavviare l'app e conserva centro del quadrante, posizione, scala e opacità.
-La scelta viene salvata e ripristinata all'avvio. I profili precedenti usano Ampio.
-Entrambi i modelli mostrano le stesse telemetrie aggiornate del primo riferimento.
+La scelta viene salvata e ripristinata all'avvio. I profili precedenti usano Wide.
+Tutti i modelli mostrano le stesse telemetrie aggiornate: km/h, percentuale e
+modalità ERS, Fuel, pedali, Straight Mode con distanza, Aero, marce e RPM.
 
 **Halo profile** salva posizioni e dimensioni diverse con nomi scelti da te,
 per esempio **Ferrari** e **Red Bull**:
@@ -119,8 +131,13 @@ I profili condividono il file impostazioni e conservano soltanto X, Y e Scala.
 Colori, modello Halo, opacità, visibilità e mini HUD pneumatici restano indipendenti.
 I comandi di ripristino del layout o delle impostazioni non cancellano i profili.
 
-Finestre e impostazioni usano DPI per monitor. I pannelli troppo grandi per
-l'area di lavoro diventano scorrevoli. Gli HUD vengono riportati nell'area
+La finestra delle impostazioni si ridimensiona trascinando lati e angoli e
+supporta ingrandimento, ripristino e affiancamento Windows. All'avvio si adatta
+all'area disponibile del monitor su cui si trova il puntatore. La disposizione
+passa da tre colonne a pannelli sovrapposti; nelle finestre strette le categorie
+sono in alto e i riquadri si dispongono su una colonna. Quando lo spazio non
+basta, lo scorrimento permette di raggiungere tutti i controlli.
+Finestre e impostazioni usano DPI per monitor. Gli HUD vengono riportati nell'area
 visibile quando cambiano monitor o risoluzione.
 
 ## Dati e disponibilità
@@ -163,6 +180,9 @@ FL/FR davanti e RL/RR dietro. Usura 0% significa gomma nuova. Ogni valore conser
 il timestamp del proprio pacchetto: nessuna interpolazione di temperature,
 usura o marcia. Le soglie termiche iniziali 85–105 °C sono preferenze visive
 modificabili, non una dichiarazione sulla finestra ottimale di ogni mescola.
+
+La percentuale nell'intestazione **TYRES** è la media aritmetica dell'usura delle
+quattro gomme. Con dati assenti o scaduti compare **--%**.
 
 La specifica trasmette energia ERS in **Joule**, ma non definisce la capacità
 totale della batteria. L'app legge automaticamente la **capacità nominale dai

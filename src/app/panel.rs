@@ -1,16 +1,24 @@
+mod layout;
+mod theme;
+
 use crate::{
     input::rear_view,
     overlay::{self, Action, wide},
     settings::*,
 };
+use layout::{Bounds, ResponsiveLayout};
 use std::{collections::BTreeMap, mem::size_of};
+use theme::{Page, Theme};
 use windows::{
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
         System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Controls::{EM_SETLIMITTEXT, SetScrollInfo},
+            Controls::{
+                EM_GETFIRSTVISIBLELINE, EM_LINESCROLL, EM_SETLIMITTEXT, SetScrollInfo,
+                SetWindowTheme,
+            },
             HiDpi::*,
             Input::HRAWINPUT,
             Shell::*,
@@ -54,7 +62,10 @@ pub const SAVE_PROFILE: u16 = 213;
 pub const LOAD_PROFILE: u16 = 214;
 const DIAGNOSTICS: u16 = 300;
 const RESULT: u16 = 301;
+const CONNECTION_STATUS: u16 = 302;
+const RUNTIME_STATUS: u16 = 303;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
+type PositionedControl = (HWND, Bounds, Option<Page>);
 
 fn layout_decimal(text: &str, current: f32, label: &str) -> std::result::Result<f32, String> {
     let text = text.trim().replace(',', ".");
@@ -69,12 +80,10 @@ fn layout_decimal(text: &str, current: f32, label: &str) -> std::result::Result<
 pub struct Panel {
     pub hwnd: HWND,
     controls: BTreeMap<u16, HWND>,
-    font: HFONT,
+    theme: Box<Theme>,
     dpi: u32,
     tray: bool,
-    children: Vec<(HWND, (i32, i32, i32, i32))>,
-    scroll_x: i32,
-    scroll_y: i32,
+    building_page: Option<Page>,
 }
 
 impl Panel {
@@ -86,36 +95,49 @@ impl Panel {
             lpszClassName: w!("F1HaloSettings"),
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW)? },
             hIcon: unsafe { LoadIconW(None, IDI_APPLICATION)? },
-            hbrBackground: HBRUSH((COLOR_BTNFACE.0 + 1) as *mut _),
             ..Default::default()
         };
         if unsafe { RegisterClassW(&class) } == 0 {
             return Err(windows::core::Error::from_thread());
         }
-        let dpi = unsafe { GetDpiForSystem() };
+        let mut cursor = POINT::default();
+        unsafe {
+            let _ = GetCursorPos(&mut cursor);
+        }
+        let dpi = overlay::monitor_dpi(cursor);
         let factor = dpi as f32 / 96.0;
-        let style =
-            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_VSCROLL | WS_HSCROLL;
+        let style = WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN;
         let mut bounds = RECT {
             left: 0,
             top: 0,
-            right: (818.0 * factor) as i32 + unsafe { GetSystemMetricsForDpi(SM_CXVSCROLL, dpi) },
-            bottom: (804.0 * factor) as i32,
+            right: (theme::WIDTH as f32 * factor) as i32
+                + unsafe { GetSystemMetricsForDpi(SM_CXVSCROLL, dpi) },
+            bottom: (theme::HEIGHT as f32 * factor) as i32,
         };
         unsafe {
             AdjustWindowRectExForDpi(&mut bounds, style, false, WINDOW_EX_STYLE(0), dpi)?;
         }
-        let work = overlay::work_area(POINT { x: 0, y: 0 });
-        let width = (bounds.right - bounds.left).min(work.right - work.left - 20);
-        let height = (bounds.bottom - bounds.top).min(work.bottom - work.top - 20);
+        let work = overlay::work_area(cursor);
+        let margin = (24.0 * factor) as i32;
+        let width = (bounds.right - bounds.left).min(work.right - work.left - margin);
+        let frame_width = bounds.right - bounds.left - (theme::WIDTH as f32 * factor) as i32;
+        let width = width.max(((360.0 * factor) as i32 + frame_width).min(work.right - work.left));
+        let frame_height = bounds.bottom - bounds.top - (theme::HEIGHT as f32 * factor) as i32;
+        let preferred = ResponsiveLayout::new(
+            ((width - frame_width) as f32 / factor) as i32,
+            theme::HEIGHT,
+            Page::Layout,
+        );
+        let height = ((preferred.content_height as f32 * factor) as i32 + frame_height)
+            .min(work.bottom - work.top - margin);
         let hwnd = unsafe {
             CreateWindowExW(
                 WS_EX_CONTROLPARENT,
                 w!("F1HaloSettings"),
                 w!("F1 Halo Telemetry · Settings"),
                 style,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
+                work.left + (work.right - work.left - width) / 2,
+                work.top + (work.bottom - work.top - height) / 2,
                 width,
                 height,
                 None,
@@ -124,35 +146,16 @@ impl Panel {
                 None,
             )?
         };
-        let font = unsafe {
-            CreateFontW(
-                -(14.0 * factor) as i32,
-                0,
-                0,
-                0,
-                FW_NORMAL.0 as i32,
-                0,
-                0,
-                0,
-                DEFAULT_CHARSET,
-                OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY,
-                DEFAULT_PITCH.0 as u32,
-                w!("Segoe UI"),
-            )
-        };
         let mut panel = Self {
             hwnd,
             controls: BTreeMap::new(),
-            font,
+            theme: Box::new(Theme::new(dpi)),
             dpi,
             tray: false,
-            children: Vec::new(),
-            scroll_x: 0,
-            scroll_y: 0,
+            building_page: None,
         };
         panel.build()?;
+        panel.theme.attach(hwnd);
         panel.reflow();
         panel.add_tray();
         Ok(panel)
@@ -171,14 +174,17 @@ impl Panel {
         let title = wide(title);
         let hwnd = unsafe {
             CreateWindowExW(
-                if class == w!("EDIT") {
-                    WS_EX_CLIENTEDGE
-                } else {
-                    WINDOW_EX_STYLE(0)
-                },
+                WINDOW_EX_STYLE(0),
                 class,
                 PCWSTR(title.as_ptr()),
-                WS_CHILD | WS_VISIBLE | style,
+                WS_CHILD
+                    | WS_VISIBLE
+                    | style
+                    | if class == w!("COMBOBOX") {
+                        WINDOW_STYLE((CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32)
+                    } else {
+                        WINDOW_STYLE(0)
+                    },
                 (x as f32 * factor) as i32,
                 (y as f32 * factor) as i32,
                 (width as f32 * factor) as i32,
@@ -193,14 +199,41 @@ impl Panel {
             SendMessageW(
                 hwnd,
                 WM_SETFONT,
-                Some(WPARAM(self.font.0 as usize)),
+                Some(WPARAM(self.theme.font().0 as usize)),
                 Some(LPARAM(1)),
             );
+            if class != w!("STATIC") {
+                let _ = SetWindowTheme(hwnd, w!(""), w!(""));
+                let kind = if class == w!("BUTTON") {
+                    1
+                } else if class == w!("EDIT") {
+                    2
+                } else {
+                    3
+                };
+                if !SetWindowSubclass(hwnd, Some(theme::control_proc), 1, kind).as_bool() {
+                    return Err(windows::core::Error::from_thread());
+                }
+                if class == w!("COMBOBOX") {
+                    SendMessageW(
+                        hwnd,
+                        CB_SETITEMHEIGHT,
+                        Some(WPARAM(usize::MAX)),
+                        Some(LPARAM((30.0 * factor) as isize)),
+                    );
+                    SendMessageW(
+                        hwnd,
+                        CB_SETITEMHEIGHT,
+                        Some(WPARAM(0)),
+                        Some(LPARAM((30.0 * factor) as isize)),
+                    );
+                }
+            }
         }
         if id != 0 {
             self.controls.insert(id, hwnd);
         }
-        self.children.push((hwnd, bounds));
+        self.theme.children.push((hwnd, bounds, self.building_page));
         Ok(hwnd)
     }
 
@@ -209,13 +242,16 @@ impl Panel {
         Ok(())
     }
     fn edit(&mut self, id: u16, x: i32, y: i32, width: i32) -> Result<()> {
-        self.control(
+        let hwnd = self.control(
             w!("EDIT"),
             "",
             id,
-            (x, y, width, 25),
+            (x + 10, y + 8, width - 20, 21),
             WS_TABSTOP | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
         )?;
+        self.theme
+            .inputs
+            .push((hwnd, (x, y, width, 36), self.building_page));
         unsafe {
             SendMessageW(self.controls[&id], EM_SETLIMITTEXT, Some(WPARAM(128)), None);
         }
@@ -234,12 +270,12 @@ impl Panel {
             w!("BUTTON"),
             text,
             id,
-            (x, y, width, 29),
+            (x, y, width, 38),
             WS_TABSTOP
                 | WINDOW_STYLE(if check {
                     BS_AUTOCHECKBOX as u32
                 } else {
-                    BS_PUSHBUTTON as u32
+                    BS_OWNERDRAW as u32
                 }),
         )?;
         Ok(())
@@ -267,132 +303,193 @@ impl Panel {
     }
 
     fn build(&mut self) -> Result<()> {
-        self.label("F1 HALO TELEMETRY   /   2026 SEASON PACK", 20, 16, 770)?;
-        self.label("UDP: Local IP", 20, 54, 110)?;
-        self.edit(IP, 130, 50, 176)?;
-        self.label("Port", 326, 54, 45)?;
-        self.edit(PORT, 375, 50, 80)?;
-        self.button("Demo (simulated data)", DEMO, 485, 49, 290, true)?;
-        self.label(
-            "LAYOUT   ·   pixel positions, independent scale and opacity",
-            20,
-            97,
-            770,
-        )?;
-        for (label, x, width) in [
-            ("HUD", 20, 150),
-            ("X", 188, 80),
-            ("Y", 288, 80),
-            ("Scale", 388, 80),
-            ("Opacity", 498, 90),
-        ] {
-            self.label(label, x, 127, width)?;
+        for (i, page) in Page::ALL.into_iter().enumerate() {
+            self.control(
+                w!("BUTTON"),
+                page.title(),
+                theme::NAV + i as u16,
+                (16, 148 + i as i32 * 54, 184, 46),
+                WS_TABSTOP | WINDOW_STYLE(BS_OWNERDRAW as u32),
+            )?;
         }
-        for (base, text, y) in [(HALO, "Show Halo", 151), (TYRES, "Show tyres", 187)] {
-            self.button(text, base, 20, y - 2, 165, true)?;
-            for (offset, x, width) in [(1, 188, 80), (2, 288, 80), (3, 388, 90), (4, 498, 90)] {
-                self.edit(base + offset, x, y, width)?;
-            }
-        }
-        self.button("Edit / Race", EDIT, 622, 150, 170, false)?;
-        self.button("Reset layout", LAYOUT, 622, 186, 170, false)?;
-        self.label("Halo model", 680, 217, 114)?;
+        self.button("Exit application", EXIT, 22, 724, 172, false)?;
+        self.button("Edit / Race", EDIT, 916, 210, 114, false)?;
+        self.button("Toggle HUDs", TOGGLE_OVERLAYS, 1042, 210, 114, false)?;
         self.combo(
-            HALO_MODEL,
-            680,
-            238,
-            114,
-            &HaloModel::ALL.map(HaloModel::label),
+            FPS,
+            916,
+            292,
+            240,
+            &["60 FPS", "120 FPS", "Monitor refresh"],
         )?;
-        self.label("TYRES", 20, 236, 175)?;
-        self.combo(MODE, 188, 232, 130, &["Surface", "Inner", "Both"])?;
-        self.label("Min / max temp. °C", 337, 237, 150)?;
-        self.edit(TEMP_MIN, 498, 232, 70)?;
-        self.edit(TEMP_MAX, 582, 232, 70)?;
-        self.label("Wear: warning / critical %", 20, 276, 270)?;
-        self.edit(WEAR_WARN, 291, 271, 70)?;
-        self.edit(WEAR_CRIT, 375, 271, 70)?;
-        self.label("0% wear = new tyre", 475, 276, 315)?;
-        self.label("COLOURS   ·   #RRGGBB format", 20, 317, 360)?;
-        for (i, (label, x, y)) in [
-            ("Accent", 20, 350),
-            ("Throttle", 287, 350),
-            ("Brake", 554, 350),
-            ("Cold", 20, 386),
-            ("Optimal", 287, 386),
-            ("Hot", 554, 386),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            self.label(label, x, y + 4, 85)?;
-            self.edit(COLOUR + i as u16, x + 90, y, 130)?;
-        }
-        self.label("FPS", 20, 435, 45)?;
-        self.combo(FPS, 70, 430, 150, &["60 FPS", "120 FPS", "Monitor refresh"])?;
-        self.label("Edit hotkey", 250, 435, 100)?;
-        self.edit(HOTKEY, 356, 430, 220)?;
-        self.button("Hide Halo in rear view", REAR_VIEW, 622, 430, 170, true)?;
-        self.label("HUD visibility hotkey", 20, 475, 177)?;
-        self.edit(VISIBILITY_HOTKEY, 203, 470, 220)?;
-        self.label("Both HUDs", 438, 475, 165)?;
-        self.button("Show / hide HUDs", TOGGLE_OVERLAYS, 622, 470, 170, false)?;
+        self.button("Demo (simulated data)", DEMO, 916, 399, 240, true)?;
+        self.button("Hide Halo in rear view", REAR_VIEW, 916, 448, 240, true)?;
         self.control(
             w!("STATIC"),
-            "Automatic ERS capacity: waiting for car data",
-            BATTERY_STATUS,
-            (20, 499, 775, 16),
+            "Waiting for UDP",
+            CONNECTION_STATUS,
+            (916, 611, 240, 32),
             WINDOW_STYLE(0),
         )?;
         self.control(
             w!("STATIC"),
-            "Initializing…",
-            DIAGNOSTICS,
-            (20, 515, 775, 112),
+            "",
+            RUNTIME_STATUS,
+            (916, 651, 240, 40),
             WINDOW_STYLE(0),
         )?;
         self.control(
             w!("STATIC"),
             "",
             RESULT,
-            (20, 704, 775, 30),
+            (244, 654, 620, 40),
             WINDOW_STYLE(0),
         )?;
-        self.label("Halo profile", 20, 638, 120)?;
+        for (text, id, x, width) in [
+            ("Apply and save", APPLY, 244, 174),
+            ("Default settings", RESET, 434, 158),
+            ("Close panel", SHOW, 608, 146),
+            ("Export diagnostics", EXPORT, 916, 240),
+        ] {
+            self.button(text, id, x, 724, width, false)?;
+        }
+
+        self.building_page = Some(Page::Layout);
+        self.button("Reset layout", LAYOUT, 738, 111, 126, false)?;
+        for (base, text, x) in [(HALO, "Show Halo", 264), (TYRES, "Show tyres", 584)] {
+            self.button(text, base, x, 213, 260, true)?;
+            for (label, offset, dx, y) in [
+                ("Position X", 1, 0, 266),
+                ("Position Y", 2, 138, 266),
+                ("Scale", 3, 0, 350),
+                ("Opacity", 4, 138, 350),
+            ] {
+                self.label(label, x + dx, y, 122)?;
+                self.edit(base + offset, x + dx, y + 24, 122)?;
+            }
+        }
+        self.label("Halo model", 264, 477, 220)?;
+        self.combo(
+            HALO_MODEL,
+            504,
+            470,
+            340,
+            &HaloModel::ALL.map(HaloModel::label),
+        )?;
+        self.label("Halo profile", 264, 555, 270)?;
         let profile = self.control(
             w!("COMBOBOX"),
             "",
             HALO_PROFILE,
-            (145, 632, 285, 180),
+            (264, 585, 270, 180),
             WS_TABSTOP | WS_VSCROLL | WINDOW_STYLE((CBS_DROPDOWN | CBS_AUTOHSCROLL) as u32),
         )?;
         unsafe {
             SendMessageW(profile, CB_LIMITTEXT, Some(WPARAM(64)), None);
         }
-        self.button("Load profile", LOAD_PROFILE, 452, 632, 150, false)?;
-        self.button("Save profile", SAVE_PROFILE, 614, 632, 180, false)?;
-        self.label(
-            "Choose a name, e.g. Ferrari. Save stores position and scale; Load restores them.",
-            20,
-            672,
-            775,
-        )?;
-        for (text, id, x, width) in [
-            ("Apply and save", APPLY, 20, 151),
-            ("Export diagnostics", EXPORT, 183, 174),
-            ("Default settings", RESET, 369, 178),
-            ("Close panel", SHOW, 559, 145),
-            ("Exit", EXIT, 716, 78),
+        self.button("Load profile", LOAD_PROFILE, 548, 585, 132, false)?;
+        self.button("Save profile", SAVE_PROFILE, 692, 585, 152, false)?;
+
+        self.building_page = Some(Page::Tyres);
+        self.label("Temperature source", 264, 258, 226)?;
+        self.combo(MODE, 504, 250, 340, &["Surface", "Inner", "Both"])?;
+        for (title, id, x, y) in [
+            ("Minimum temperature", TEMP_MIN, 264, 392),
+            ("Maximum temperature", TEMP_MAX, 264, 475),
+            ("Warning at", WEAR_WARN, 584, 392),
+            ("Critical at", WEAR_CRIT, 584, 475),
         ] {
-            self.button(text, id, x, 752, width, false)?;
+            self.label(title, x, y, 260)?;
+            self.edit(id, x, y + 25, 260)?;
         }
+
+        self.building_page = Some(Page::Colours);
+        for i in 0..6 {
+            let x = 244 + (i % 2) * 320;
+            let y = 196 + (i / 2) * 146;
+            self.edit(COLOUR + i as u16, x + 68, y + 80, 212)?;
+        }
+
+        self.building_page = Some(Page::Connection);
+        self.label("Local listening IP", 264, 254, 352)?;
+        self.edit(IP, 264, 282, 352)?;
+        self.label("UDP port", 640, 254, 204)?;
+        self.edit(PORT, 640, 282, 204)?;
+
+        self.building_page = Some(Page::Shortcuts);
+        self.label(
+            "Switch between driving and positioning your HUDs.",
+            264,
+            251,
+            580,
+        )?;
+        self.edit(HOTKEY, 264, 291, 580)?;
+        self.label(
+            "Show or hide both HUDs without changing their layout.",
+            264,
+            437,
+            580,
+        )?;
+        self.edit(VISIBILITY_HOTKEY, 264, 477, 580)?;
+
+        self.building_page = Some(Page::Diagnostics);
+        self.control(
+            w!("STATIC"),
+            "Waiting for compatible car data.",
+            BATTERY_STATUS,
+            (264, 252, 580, 64),
+            WINDOW_STYLE(0),
+        )?;
+        self.control(
+            w!("EDIT"),
+            "Initializing…",
+            DIAGNOSTICS,
+            (264, 410, 580, 210),
+            WS_TABSTOP
+                | WS_VSCROLL
+                | WINDOW_STYLE((ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL) as u32),
+        )?;
+        self.building_page = None;
         Ok(())
+    }
+
+    pub fn navigate(&mut self, command: u16) -> bool {
+        let Some(page) = command
+            .checked_sub(theme::NAV)
+            .and_then(|index| Page::ALL.get(index as usize))
+            .copied()
+        else {
+            return false;
+        };
+        self.theme.page.set(page);
+        unsafe {
+            SetScrollInfo(
+                self.hwnd,
+                SB_VERT,
+                &SCROLLINFO {
+                    cbSize: size_of::<SCROLLINFO>() as u32,
+                    fMask: SIF_POS,
+                    nPos: 0,
+                    ..Default::default()
+                },
+                false,
+            );
+        }
+        self.reflow();
+        true
     }
 
     pub fn show(&self) {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOW);
-            let _ = ShowWindow(self.hwnd, SW_RESTORE);
+            let _ = ShowWindow(
+                self.hwnd,
+                if IsIconic(self.hwnd).as_bool() {
+                    SW_RESTORE
+                } else {
+                    SW_SHOW
+                },
+            );
             let _ = SetWindowPos(
                 self.hwnd,
                 Some(HWND_TOPMOST),
@@ -433,6 +530,10 @@ impl Panel {
                 Some(WPARAM(checked as usize)),
                 None,
             );
+            let _ = InvalidateRect(Some(self.controls[&id]), None, false);
+            if matches!(id, HALO | TYRES) {
+                let _ = InvalidateRect(Some(self.hwnd), None, false);
+            }
         }
     }
     pub fn checked(&self, id: u16) -> bool {
@@ -458,6 +559,7 @@ impl Panel {
             match s.halo_model {
                 HaloModel::Wide => 0,
                 HaloModel::Classic => 1,
+                HaloModel::Modern => 2,
             },
         );
         self.select(
@@ -576,6 +678,7 @@ impl Panel {
         s.halo_model = match self.selected(HALO_MODEL) {
             0 => HaloModel::Wide,
             1 => HaloModel::Classic,
+            2 => HaloModel::Modern,
             _ => return Err("Select a Halo model.".into()),
         };
         s.bind_ip = self.text(IP).trim().into();
@@ -637,141 +740,143 @@ impl Panel {
     }
     pub fn diagnostics(&self, text: &str) {
         if self.visible() {
+            let control = self.controls[&DIAGNOSTICS];
+            let first = unsafe { SendMessageW(control, EM_GETFIRSTVISIBLELINE, None, None).0 };
             self.set(DIAGNOSTICS, text);
+            let after = unsafe { SendMessageW(control, EM_GETFIRSTVISIBLELINE, None, None).0 };
+            if first != after {
+                unsafe {
+                    SendMessageW(control, EM_LINESCROLL, None, Some(LPARAM(first - after)));
+                }
+            }
         }
     }
     pub fn battery_status(&self, text: &str) {
         self.set(BATTERY_STATUS, text);
     }
 
-    fn reflow(&mut self) {
-        let factor = self.dpi as f32 / 96.0;
-        for _ in 0..2 {
-            let mut client = RECT::default();
-            unsafe {
-                let _ = GetClientRect(self.hwnd, &mut client);
-            }
-            for (bar, full, page, offset) in [
-                (
-                    SB_HORZ,
-                    (818.0 * factor) as i32,
-                    client.right,
-                    &mut self.scroll_x,
-                ),
-                (
-                    SB_VERT,
-                    (804.0 * factor) as i32,
-                    client.bottom,
-                    &mut self.scroll_y,
-                ),
-            ] {
-                *offset = (*offset).clamp(0, (full - page).max(0));
-                let info = SCROLLINFO {
-                    cbSize: size_of::<SCROLLINFO>() as u32,
-                    fMask: SIF_RANGE | SIF_PAGE | SIF_POS,
-                    nMin: 0,
-                    nMax: full - 1,
-                    nPage: page.max(0) as u32,
-                    nPos: *offset,
-                    ..Default::default()
-                };
-                unsafe {
-                    SetScrollInfo(self.hwnd, bar, &info, true);
-                }
-            }
-        }
-        for &(hwnd, (x, y, width, height)) in &self.children {
-            unsafe {
-                let _ = SetWindowPos(
-                    hwnd,
-                    None,
-                    (x as f32 * factor) as i32 - self.scroll_x,
-                    (y as f32 * factor) as i32 - self.scroll_y,
-                    (width as f32 * factor) as i32,
-                    (height as f32 * factor) as i32,
-                    SWP_NOACTIVATE | SWP_NOZORDER,
-                );
-            }
-        }
+    pub fn session_status(&self, connection: &str, cpu: f64, memory: u64) {
+        self.set(CONNECTION_STATUS, connection);
+        self.set(
+            RUNTIME_STATUS,
+            &format!(
+                "CPU {cpu:.1}%  ·  RAM {:.1} MB",
+                memory as f64 / 1_048_576.0
+            ),
+        );
+    }
+
+    fn reflow(&self) {
+        self.theme.resize(self.hwnd);
     }
 
     pub fn change_dpi(&mut self, dpi: u32, suggested: RECT) {
         self.dpi = dpi.max(96);
         let factor = self.dpi as f32 / 96.0;
-        let old = self.font;
-        self.font = unsafe {
-            CreateFontW(
-                -(14.0 * factor) as i32,
-                0,
-                0,
-                0,
-                FW_NORMAL.0 as i32,
-                0,
-                0,
-                0,
-                DEFAULT_CHARSET,
-                OUT_DEFAULT_PRECIS,
-                CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY,
-                DEFAULT_PITCH.0 as u32,
-                w!("Segoe UI"),
-            )
-        };
+        let mut theme = Box::new(Theme::new(self.dpi));
+        theme.page.set(self.theme.page.get());
+        theme.inputs.clone_from(&self.theme.inputs);
+        theme.children.clone_from(&self.theme.children);
+        theme.layout.set(self.theme.layout.get());
+        theme.attach(self.hwnd);
+        let old = std::mem::replace(&mut self.theme, theme);
         let work = overlay::work_area(POINT {
             x: suggested.left,
             y: suggested.top,
         });
-        let width = (suggested.right - suggested.left).min(work.right - work.left);
-        let height = (suggested.bottom - suggested.top).min(work.bottom - work.top);
+        let maximized = unsafe { IsZoomed(self.hwnd).as_bool() };
+        let width = if maximized {
+            suggested.right - suggested.left
+        } else {
+            (suggested.right - suggested.left).min(work.right - work.left)
+        };
+        let height = if maximized {
+            suggested.bottom - suggested.top
+        } else {
+            (suggested.bottom - suggested.top).min(work.bottom - work.top)
+        };
         unsafe {
             let _ = SetWindowPos(
                 self.hwnd,
                 None,
-                suggested.left.clamp(work.left, work.right - width),
-                suggested.top.clamp(work.top, work.bottom - height),
+                if maximized {
+                    suggested.left
+                } else {
+                    suggested.left.clamp(work.left, work.right - width)
+                },
+                if maximized {
+                    suggested.top
+                } else {
+                    suggested.top.clamp(work.top, work.bottom - height)
+                },
                 width,
                 height,
                 SWP_NOACTIVATE | SWP_NOZORDER,
             );
-            for &(hwnd, _) in &self.children {
+            for &(hwnd, _, _) in &self.theme.children {
                 SendMessageW(
                     hwnd,
                     WM_SETFONT,
-                    Some(WPARAM(self.font.0 as usize)),
+                    Some(WPARAM(self.theme.font().0 as usize)),
                     Some(LPARAM(1)),
                 );
+                let mut class = [0u16; 32];
+                let n = GetClassNameW(hwnd, &mut class);
+                if String::from_utf16_lossy(&class[..n.max(0) as usize]) == "ComboBox" {
+                    let height = (30.0 * factor) as isize;
+                    SendMessageW(
+                        hwnd,
+                        CB_SETITEMHEIGHT,
+                        Some(WPARAM(usize::MAX)),
+                        Some(LPARAM(height)),
+                    );
+                    SendMessageW(
+                        hwnd,
+                        CB_SETITEMHEIGHT,
+                        Some(WPARAM(0)),
+                        Some(LPARAM(height)),
+                    );
+                }
             }
-            let _ = DeleteObject(old.into());
         }
+        drop(old);
         self.reflow();
     }
 
-    pub fn scroll(&mut self, vertical: bool, code: u16, position: u16) {
-        let mut client = RECT::default();
+    pub fn scroll(&self, vertical: bool, code: u16, position: u16) {
         unsafe {
+            let mut client = RECT::default();
             let _ = GetClientRect(self.hwnd, &mut client);
+            let bar = if vertical { SB_VERT } else { SB_HORZ };
+            let page = if vertical {
+                client.bottom
+            } else {
+                client.right
+            };
+            let current = GetScrollPos(self.hwnd, bar);
+            let line = (32 * self.dpi / 96) as i32;
+            let next = match code {
+                0 => current - line,
+                1 => current + line,
+                2 => current - page,
+                3 => current + page,
+                4 | 5 => position as i32,
+                6 => 0,
+                7 => i32::MAX,
+                _ => current,
+            };
+            SetScrollInfo(
+                self.hwnd,
+                bar,
+                &SCROLLINFO {
+                    cbSize: size_of::<SCROLLINFO>() as u32,
+                    fMask: SIF_POS,
+                    nPos: next,
+                    ..Default::default()
+                },
+                true,
+            );
         }
-        let page = if vertical {
-            client.bottom
-        } else {
-            client.right
-        };
-        let offset = if vertical {
-            &mut self.scroll_y
-        } else {
-            &mut self.scroll_x
-        };
-        let line = (32 * self.dpi / 96) as i32;
-        *offset = match code as i32 {
-            0 => *offset - line,
-            1 => *offset + line,
-            2 => *offset - page,
-            3 => *offset + page,
-            4 | 5 => position as i32,
-            6 => 0,
-            7 => i32::MAX,
-            _ => *offset,
-        };
         self.reflow();
     }
 
@@ -846,7 +951,6 @@ impl Drop for Panel {
                 let _ = Shell_NotifyIconW(NIM_DELETE, &data);
             }
             let _ = DestroyWindow(self.hwnd);
-            let _ = DeleteObject(self.font.into());
         }
     }
 }
@@ -857,6 +961,9 @@ unsafe extern "system" fn panel_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if let Some(result) = theme::message(hwnd, message, wparam, lparam) {
+        return result;
+    }
     match message {
         WM_INPUT => {
             if let Some((device, down)) = rear_view::read_raw(HRAWINPUT(lparam.0 as *mut _)) {
@@ -883,6 +990,34 @@ unsafe extern "system" fn panel_proc(
             return LRESULT(0);
         }
         WM_DISPLAYCHANGE => overlay::push(Action::DisplayChanged),
+        WM_GETMINMAXINFO => {
+            unsafe {
+                let dpi = GetDpiForWindow(hwnd).max(96);
+                let mut minimum = RECT {
+                    right: (360 * dpi / 96) as i32,
+                    bottom: (320 * dpi / 96) as i32,
+                    ..Default::default()
+                };
+                let _ = AdjustWindowRectExForDpi(
+                    &mut minimum,
+                    WS_OVERLAPPEDWINDOW | WS_VSCROLL,
+                    false,
+                    WS_EX_CONTROLPARENT,
+                    dpi,
+                );
+                let bounds = overlay::window_rect(hwnd);
+                let work = overlay::work_area(POINT {
+                    x: bounds.left,
+                    y: bounds.top,
+                });
+                let info = &mut *(lparam.0 as *mut MINMAXINFO);
+                info.ptMinTrackSize.x = (minimum.right - minimum.left
+                    + GetSystemMetricsForDpi(SM_CXVSCROLL, dpi))
+                .min(work.right - work.left);
+                info.ptMinTrackSize.y = (minimum.bottom - minimum.top).min(work.bottom - work.top);
+            }
+            return LRESULT(0);
+        }
         WM_DPICHANGED => {
             let rect = unsafe { *(lparam.0 as *const RECT) };
             overlay::push(Action::PanelDpi((wparam.0 & 0xffff) as u32, rect));
@@ -915,7 +1050,300 @@ unsafe extern "system" fn panel_proc(
 
 #[cfg(test)]
 mod tests {
-    use super::layout_decimal;
+    use super::*;
+
+    fn assert_hover_paints_locally(panel: &Panel) {
+        unsafe {
+            for id in [HALO + 1, APPLY, HALO, HALO_MODEL] {
+                let control = panel.controls[&id];
+                let _ = RedrawWindow(
+                    Some(panel.hwnd),
+                    None,
+                    None,
+                    RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW,
+                );
+                let _ = ValidateRect(Some(panel.hwnd), None);
+                let _ = ValidateRect(Some(control), None);
+                SendMessageW(control, WM_MOUSEMOVE, None, Some(LPARAM(10 | (10 << 16))));
+                let mut dirty = RECT::default();
+                let invalidated = GetUpdateRect(panel.hwnd, Some(&mut dirty), false).as_bool();
+                let mut bounds = RECT::default();
+                GetWindowRect(control, &mut bounds).unwrap();
+                let mut origin = POINT {
+                    x: bounds.left,
+                    y: bounds.top,
+                };
+                let _ = ScreenToClient(panel.hwnd, &mut origin);
+                assert!(
+                    !invalidated
+                        || (dirty.left >= origin.x
+                            && dirty.top >= origin.y
+                            && dirty.right <= origin.x + bounds.right - bounds.left
+                            && dirty.bottom <= origin.y + bounds.bottom - bounds.top),
+                    "Hover over control {id} invalidated unrelated settings: {dirty:?}"
+                );
+                let _ = ValidateRect(Some(control), None);
+                for x in 11..30 {
+                    SendMessageW(control, WM_MOUSEMOVE, None, Some(LPARAM(x | (10 << 16))));
+                }
+                assert!(
+                    !GetUpdateRect(control, None, false).as_bool(),
+                    "Moving within control {id} repainted an unchanged hover state"
+                );
+                SendMessageW(
+                    control,
+                    windows::Win32::UI::Controls::WM_MOUSELEAVE,
+                    None,
+                    None,
+                );
+            }
+        }
+    }
+
+    fn assert_control_print_uses_the_skin(panel: &Panel) {
+        unsafe {
+            let screen = GetDC(None);
+            let dc = CreateCompatibleDC(Some(screen));
+            let bitmap = CreateCompatibleBitmap(
+                screen,
+                (400 * panel.dpi / 96) as i32,
+                (60 * panel.dpi / 96) as i32,
+            );
+            let previous = SelectObject(dc, bitmap.into());
+            for id in [APPLY, HALO_MODEL] {
+                let control = panel.controls[&id];
+                let mut rect = RECT::default();
+                GetClientRect(control, &mut rect).unwrap();
+                SetDCBrushColor(dc, COLORREF(0x4e2c19));
+                FillRect(dc, &rect, HBRUSH(GetStockObject(DC_BRUSH).0));
+                SendMessageW(
+                    control,
+                    WM_PRINTCLIENT,
+                    Some(WPARAM(dc.0 as usize)),
+                    Some(LPARAM(PRF_CLIENT as isize)),
+                );
+                let colour = GetPixel(
+                    dc,
+                    if id == APPLY { 5 } else { rect.right - 4 },
+                    rect.bottom / 2,
+                )
+                .0;
+                let (red, green, blue) =
+                    (colour & 0xff, (colour >> 8) & 0xff, (colour >> 16) & 0xff);
+                // Allow display colour management while rejecting the native grey button chrome.
+                let themed = if id == APPLY {
+                    green > red + 60 && blue > red + 60
+                } else {
+                    red.max(green).max(blue) < 100
+                };
+                assert!(
+                    themed,
+                    "Control {id} exposed native paint below its skin: {colour:x}"
+                );
+                if id == HALO_MODEL {
+                    let has_caption = (8..28).any(|y| {
+                        (10..90).any(|x| {
+                            let pixel = GetPixel(dc, x, y).0;
+                            (pixel & 0xff) + ((pixel >> 8) & 0xff) + ((pixel >> 16) & 0xff) > 600
+                        })
+                    });
+                    assert!(
+                        has_caption,
+                        "Custom combo painting lost the selected model caption"
+                    );
+                }
+            }
+            SelectObject(dc, previous);
+            let _ = DeleteObject(bitmap.into());
+            let _ = DeleteDC(dc);
+            ReleaseDC(None, screen);
+        }
+    }
+
+    fn assert_responsive_controls(panel: &mut Panel) {
+        unsafe {
+            let style = GetWindowLongPtrW(panel.hwnd, GWL_STYLE) as u32;
+            assert_ne!(style & WS_THICKFRAME.0, 0);
+            assert_ne!(style & WS_MAXIMIZEBOX.0, 0);
+            assert_eq!(style & WS_HSCROLL.0, 0);
+        }
+        for (width, height, dpi) in [
+            (1180, 780, 96),
+            (1920, 1040, 96),
+            (1080, 1800, 96),
+            (900, 1400, 96),
+            (720, 1100, 144),
+            (540, 960, 192),
+            (1280, 600, 96),
+            (360, 700, 96),
+        ] {
+            panel.change_dpi(dpi, overlay::window_rect(panel.hwnd));
+            let mut outer = RECT {
+                right: width * dpi as i32 / 96,
+                bottom: height * dpi as i32 / 96,
+                ..Default::default()
+            };
+            unsafe {
+                let style = WINDOW_STYLE(GetWindowLongPtrW(panel.hwnd, GWL_STYLE) as u32);
+                AdjustWindowRectExForDpi(&mut outer, style, false, WS_EX_CONTROLPARENT, dpi)
+                    .unwrap();
+                SetWindowPos(
+                    panel.hwnd,
+                    None,
+                    0,
+                    0,
+                    outer.right - outer.left,
+                    outer.bottom - outer.top,
+                    SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                )
+                .unwrap();
+            }
+            for (index, page) in Page::ALL.into_iter().enumerate() {
+                panel.navigate(theme::NAV + index as u16);
+                let layout = panel.theme.layout.get();
+                let mut client = RECT::default();
+                unsafe {
+                    GetClientRect(panel.hwnd, &mut client).unwrap();
+                }
+                let mut visible = Vec::new();
+                for &(child, _, owner) in &panel.theme.children {
+                    if owner.is_some_and(|owner| owner != page) {
+                        continue;
+                    }
+                    let mut bounds = RECT::default();
+                    unsafe {
+                        GetWindowRect(child, &mut bounds).unwrap();
+                    }
+                    let mut origin = POINT {
+                        x: bounds.left,
+                        y: bounds.top,
+                    };
+                    unsafe {
+                        let _ = ScreenToClient(panel.hwnd, &mut origin);
+                    }
+                    let rect = (
+                        origin.x,
+                        origin.y,
+                        bounds.right - bounds.left,
+                        bounds.bottom - bounds.top,
+                    );
+                    let id = unsafe { GetDlgCtrlID(child) };
+                    let (x, y, w, h) = rect;
+                    assert!(
+                        x >= 0
+                            && w > 0
+                            && x + w <= client.right
+                            && y >= 0
+                            && h > 0
+                            && y + h <= (layout.content_height * dpi as i32 + 95) / 96,
+                        "{page:?} at {width}x{height}/{dpi} DPI: control {id} escaped the layout: {rect:?}"
+                    );
+                    visible.push((id, rect));
+                }
+                for (i, &(id, (x, y, w, h))) in visible.iter().enumerate() {
+                    for &(other, (rx, ry, rw, rh)) in &visible[i + 1..] {
+                        assert!(
+                            x + w <= rx || rx + rw <= x || y + h <= ry || ry + rh <= y,
+                            "{page:?} at {width}x{height}/{dpi} DPI: controls {id} {other} overlap: {:?} {:?}",
+                            (x, y, w, h),
+                            (rx, ry, rw, rh)
+                        );
+                    }
+                }
+            }
+        }
+        panel.navigate(theme::NAV + 3);
+        panel.scroll(true, 7, 0);
+        unsafe {
+            let input = panel.controls[&IP];
+            SendMessageW(input, WM_SETFOCUS, None, None);
+            let mut bounds = RECT::default();
+            GetWindowRect(input, &mut bounds).unwrap();
+            let mut origin = POINT {
+                x: bounds.left,
+                y: bounds.top,
+            };
+            let _ = ScreenToClient(panel.hwnd, &mut origin);
+            let mut client = RECT::default();
+            GetClientRect(panel.hwnd, &mut client).unwrap();
+            assert!(
+                origin.y >= 0 && origin.y + bounds.bottom - bounds.top <= client.bottom,
+                "Keyboard focus left the editable field outside the narrow viewport"
+            );
+        }
+    }
+
+    #[test]
+    fn switching_settings_pages_preserves_unsaved_values() {
+        let mut panel = Panel::new().unwrap();
+        let settings = Settings::default();
+        panel.populate(&settings, false);
+        unsafe {
+            let _ = ShowWindow(panel.hwnd, SW_SHOWNOACTIVATE);
+        }
+        assert_hover_paints_locally(&panel);
+        assert_control_print_uses_the_skin(&panel);
+        panel.navigate(theme::NAV + 5);
+        let log = (0..100)
+            .map(|line| format!("Diagnostic line {line}\r\n"))
+            .collect::<String>();
+        panel.set(DIAGNOSTICS, &log);
+        unsafe {
+            let control = panel.controls[&DIAGNOSTICS];
+            SendMessageW(control, EM_LINESCROLL, None, Some(LPARAM(20)));
+            let first = SendMessageW(control, EM_GETFIRSTVISIBLELINE, None, None).0;
+            assert!(first > 0);
+            panel.diagnostics(&format!("{log}Updated status"));
+            assert_eq!(
+                SendMessageW(control, EM_GETFIRSTVISIBLELINE, None, None).0,
+                first
+            );
+        }
+        panel.navigate(theme::NAV);
+        panel.hide();
+        panel.set(IP, "127.0.0.2");
+        panel.set(TEMP_MIN, "87");
+        panel.set(COLOUR, "#64DDF5");
+        panel.set(HOTKEY, "Ctrl+Shift+F9");
+        panel.set(HALO_PROFILE, "Ferrari test profile");
+        panel.check(REAR_VIEW, false);
+        assert_responsive_controls(&mut panel);
+        for (index, page) in Page::ALL.into_iter().enumerate() {
+            let id = theme::NAV + index as u16;
+            unsafe {
+                SendMessageW(panel.controls[&id], BM_CLICK, None, None);
+            }
+            let mut clicked = false;
+            while let Some(action) = overlay::pop() {
+                if let Action::Command(command) = action {
+                    assert_eq!(command, id);
+                    clicked = panel.navigate(command);
+                }
+            }
+            assert!(clicked);
+            assert!(panel.theme.page.get() == page);
+            for &(hwnd, _, owner) in &panel.theme.children {
+                let visible =
+                    unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_VISIBLE.0 != 0 };
+                assert_eq!(visible, owner.is_none_or(|owner| owner == page));
+            }
+        }
+        assert!(!panel.navigate(APPLY));
+        for dpi in [144, 192, 96] {
+            panel.change_dpi(dpi, overlay::window_rect(panel.hwnd));
+            assert_eq!(panel.dpi, dpi);
+            assert!(panel.theme.page.get() == Page::Diagnostics);
+        }
+        assert_eq!(panel.text(HALO_PROFILE), "Ferrari test profile");
+        let read = panel.read(&settings).unwrap();
+        assert_eq!(read.bind_ip, "127.0.0.2");
+        assert_eq!(read.temperature_min_c, 87.0);
+        assert_eq!(read.colours.accent, [100, 221, 245]);
+        assert_eq!(read.hotkey, "Ctrl+Shift+F9");
+        assert!(!read.hide_halo_rear_view);
+        assert_eq!(read.halo.scale, settings.halo.scale);
+        assert_eq!(read.tyres.opacity, settings.tyres.opacity);
+    }
 
     #[test]
     fn choosing_a_model_preserves_unedited_mouse_scale_and_opacity_precision() {

@@ -22,6 +22,7 @@ use std::{
 use windows::{
     Win32::{
         Foundation::*,
+        Graphics::Direct2D::ID2D1Bitmap1,
         System::{Com::*, ProcessStatus::*, Threading::*},
         UI::{HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
@@ -125,6 +126,7 @@ pub fn run(options: Options) -> Result<(), String> {
         graphics: None,
         surfaces: [None, None],
         halo: None,
+        tyre_car: None,
         settings,
         config,
         receiver,
@@ -213,6 +215,7 @@ struct App {
     graphics: Option<Graphics>,
     surfaces: [Option<Surface>; 2],
     halo: Option<Halo>,
+    tyre_car: Option<ID2D1Bitmap1>,
     settings: Settings,
     config: PathBuf,
     receiver: Receiver,
@@ -250,9 +253,13 @@ impl App {
     fn create_graphics(&mut self) -> Result<(), String> {
         self.surfaces = [None, None];
         self.halo = None;
+        self.tyre_car = None;
         self.graphics = None;
         let graphics = Graphics::new().map_err(|e| e.to_string())?;
         let halo = Halo::new(&graphics.geometry_factory).map_err(|e| e.to_string())?;
+        let tyre_car = graphics
+            .bitmap(include_bytes!("../../assets/tyre-car.png"))
+            .map_err(|e| e.to_string())?;
         for (index, overlay) in self.overlays.iter().enumerate() {
             let (width, height) = overlay.size();
             self.surfaces[index] = Some(
@@ -263,6 +270,7 @@ impl App {
         }
         self.graphics = Some(graphics);
         self.halo = Some(halo);
+        self.tyre_car = Some(tyre_car);
         self.graphics_error = None;
         self.dirty = true;
         Ok(())
@@ -347,6 +355,7 @@ impl App {
                         self.graphics_error = Some(error);
                         self.surfaces = [None, None];
                         self.halo = None;
+                        self.tyre_car = None;
                         self.graphics = None;
                         self.graphics_retry = Instant::now() + Duration::from_millis(500);
                     }
@@ -459,7 +468,14 @@ impl App {
                     now,
                 );
             } else {
-                hud::tyres::draw(&painter, &self.snapshot, &self.settings, self.edit, now);
+                hud::tyres::draw(
+                    &painter,
+                    self.tyre_car.as_ref().unwrap(),
+                    &self.snapshot,
+                    &self.settings,
+                    self.edit,
+                    now,
+                );
             }
             surface.present().map_err(|e| e.to_string())?;
         }
@@ -747,6 +763,7 @@ impl App {
             }
             Action::CycleTyres => self.cycle_tyres()?,
             Action::Command(command) => match command {
+                command if self.panel.navigate(command) => (),
                 panel::APPLY => self.apply()?,
                 panel::SAVE_PROFILE => self.halo_profile(true)?,
                 panel::LOAD_PROFILE => self.halo_profile(false)?,
@@ -842,6 +859,11 @@ impl App {
         if !self.panel.visible() {
             return;
         }
+        self.panel.session_status(
+            self.snapshot.connection(now).label(),
+            self.usage.cpu,
+            self.usage.memory,
+        );
         self.panel.battery_status(
             &self
                 .snapshot

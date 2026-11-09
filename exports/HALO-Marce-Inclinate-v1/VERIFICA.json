@@ -1,0 +1,37 @@
+{
+  "Width": 2171,
+  "Height": 724,
+  "BackgroundAlpha": 0,
+  "OriginalRPMAngleDegrees": 13.897494373988351,
+  "FinalRPMAngleDegrees": 17.357753009739913,
+  "ClockwiseRotationDegrees": 3.4602586357515612,
+  "MaximumBaselineResidualPixels": 0.3904761904761358,
+  "CapAlphaMismatches": 0,
+  "LeftAndCenterPixelsUnchanged": true,
+  "BaselineSamples": [
+    {
+      "X": 1450,
+      "Y": 356
+    },
+    {
+      "X": 1500,
+      "Y": 372
+    },
+    {
+      "X": 1550,
+      "Y": 387
+    },
+    {
+      "X": 1600,
+      "Y": 403
+    },
+    {
+      "X": 1650,
+      "Y": 419
+    },
+    {
+      "X": 1700,
+      "Y": 434
+    }
+  ]
+}

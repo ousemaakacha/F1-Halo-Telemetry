@@ -1,4 +1,5 @@
 mod classic;
+mod modern;
 
 use crate::{
     graphics::{Font::*, *},
@@ -124,6 +125,7 @@ fn halo_band_angle(x: f32, offset: f32) -> f32 {
 
 pub struct Halo {
     classic: classic::Classic,
+    modern: modern::Modern,
     ribbon: ID2D1PathGeometry,
     brow: ID2D1PathGeometry,
     lower_edge: ID2D1PathGeometry,
@@ -140,6 +142,7 @@ impl Halo {
     pub fn new(factory: &ID2D1Factory1) -> Result<Self> {
         Ok(Self {
             classic: classic::Classic::new(factory)?,
+            modern: modern::Modern::new(factory)?,
             ribbon: halo_path(factory, 0.0, 875.0, -82.0, Some((20.0, 825.0, -3.0)))?,
             brow: halo_path(factory, 0.0, 875.0, -82.0, None)?,
             lower_edge: halo_path(factory, 20.0, 825.0, 0.0, None)?,
@@ -206,8 +209,11 @@ impl Halo {
         let accent = settings.colours.accent;
 
         let is_classic = settings.halo_model == HaloModel::Classic;
+        let is_modern = settings.halo_model == HaloModel::Modern;
         if is_classic {
             self.classic.draw_frame(p, accent);
+        } else if is_modern {
+            self.modern.draw_frame(p, accent);
         } else {
             p.geometry(&self.ribbon, INK, 0.84);
             p.stroke_geometry(&self.brow, EDGE, 0.9, 0.65);
@@ -217,91 +223,120 @@ impl Halo {
             }
         }
 
-        for rib in &self.ribs {
-            p.stroke_geometry(rib, EDGE, 0.9, 0.8);
+        if !is_modern {
+            for rib in &self.ribs {
+                p.stroke_geometry(rib, EDGE, 0.9, 0.8);
+            }
         }
-        // The ring retains the game's 15 rev-light bits, from left to right.
-        p.circle(420.0, 94.0, 56.0, INK, 0.94);
-        p.stroke_geometry(&self.dial, accent, 8.0, 0.06);
-        p.stroke_geometry(&self.dial, accent, 2.2, 1.0);
-        for (i, segment) in self.rev_segments.iter().enumerate() {
-            let on = tel.is_some_and(|t| t.rev_bits & (1 << i) != 0);
-            p.stroke_geometry(
-                segment,
-                if on { WHITE } else { EDGE },
-                3.8,
-                if on { 1.0 } else { 0.65 },
+        p.scaled((CENTER_X, 94.0), if is_modern { 1.12 } else { 1.0 }, |p| {
+            // The ring retains the game's 15 rev-light bits, from left to right.
+            p.circle(
+                420.0,
+                94.0,
+                if is_modern { 60.0 } else { 56.0 },
+                INK,
+                if is_modern { 0.97 } else { 0.94 },
             );
-        }
-        p.text("KM/H", rect(383.0, 49.0, 74.0, 15.0), HudLabel, WHITE);
-        p.line((390.0, 103.0), (450.0, 103.0), EDGE, 0.7, 0.6);
-        if let Some(t) = tel {
-            p.textf(
-                format_args!("{}", t.speed_kmh),
-                rect(360.0, 62.0, 120.0, 41.0),
-                HudSpeed,
-                WHITE,
-            );
-        } else {
-            p.text("--", rect(360.0, 62.0, 120.0, 41.0), HudSpeed, MUTED);
-        }
-        let percentage =
-            status.and_then(|s| ers_percent(s.ers_joules, snapshot.ers_capacity.map(|c| c.joules)));
-        let energy_colour = ers_colour(aero);
-        if let Some(percent) = percentage {
-            p.textf(
-                format_args!("{percent:.0}%"),
-                rect(365.0, 105.0, 110.0, 29.0),
-                HudSecondary,
+            p.stroke_geometry(&self.dial, accent, 8.0, 0.06);
+            p.stroke_geometry(&self.dial, accent, 2.2, 1.0);
+            for (i, segment) in self.rev_segments.iter().enumerate() {
+                let on = tel.is_some_and(|t| t.rev_bits & (1 << i) != 0);
+                p.stroke_geometry(
+                    segment,
+                    if on { WHITE } else { EDGE },
+                    3.8,
+                    if on { 1.0 } else { 0.65 },
+                );
+            }
+            p.text("KM/H", rect(383.0, 49.0, 74.0, 15.0), HudLabel, WHITE);
+            p.line((390.0, 103.0), (450.0, 103.0), EDGE, 0.7, 0.6);
+            if let Some(t) = tel {
+                p.textf(
+                    format_args!("{}", t.speed_kmh),
+                    rect(360.0, 62.0, 120.0, 41.0),
+                    HudSpeed,
+                    WHITE,
+                );
+            } else {
+                p.text("--", rect(360.0, 62.0, 120.0, 41.0), HudSpeed, MUTED);
+            }
+            let percentage = status
+                .and_then(|s| ers_percent(s.ers_joules, snapshot.ers_capacity.map(|c| c.joules)));
+            let energy_colour = ers_colour(aero);
+            if let Some(percent) = percentage {
+                p.textf(
+                    format_args!("{percent:.0}%"),
+                    rect(365.0, 105.0, 110.0, 29.0),
+                    HudSecondary,
+                    energy_colour,
+                );
+            } else if let Some(s) = status {
+                p.textf(
+                    format_args!("{:.2} MJ", s.ers_joules / 1_000_000.0),
+                    rect(365.0, 105.0, 110.0, 29.0),
+                    HudNumber,
+                    energy_colour,
+                );
+            } else {
+                p.text("--%", rect(365.0, 105.0, 110.0, 29.0), HudSecondary, MUTED);
+            }
+            p.text(
+                deploy_label(status),
+                rect(361.0, 132.0, 118.0, 13.0),
+                HudLabel,
                 energy_colour,
             );
-        } else if let Some(s) = status {
-            p.textf(
-                format_args!("{:.2} MJ", s.ers_joules / 1_000_000.0),
-                rect(365.0, 105.0, 110.0, 29.0),
-                HudNumber,
-                energy_colour,
-            );
-        } else {
-            p.text("--%", rect(365.0, 105.0, 110.0, 29.0), HudSecondary, MUTED);
-        }
-        p.text(
-            deploy_label(status),
-            rect(361.0, 132.0, 118.0, 13.0),
-            HudLabel,
-            energy_colour,
-        );
+        });
 
         for (x, label, value, rgb) in [
-            (294.0, "BRAKE", tel.map(|t| t.brake), settings.colours.brake),
             (
-                508.0,
+                if is_modern { 282.0 } else { 294.0 },
+                "BRAKE",
+                tel.map(|t| t.brake),
+                settings.colours.brake,
+            ),
+            (
+                if is_modern { 520.0 } else { 508.0 },
                 "THROTTLE",
                 tel.map(|t| t.throttle),
                 settings.colours.throttle,
             ),
         ] {
-            let angle = if is_classic {
+            let angle = if is_modern || is_classic {
                 if x < CENTER_X { -9.0 } else { 9.0 }
             } else {
                 halo_angle(x + 19.0)
             };
             p.rotated((x + 19.0, 107.0), angle, |p| {
                 for i in 0..10 {
-                    let y = 136.0 - i as f32 * 7.2;
-                    p.fill(rect(x, y, 38.0, 5.4), EDGE, 0.55);
+                    let y = if is_modern {
+                        138.0 - i as f32 * 8.2
+                    } else {
+                        136.0 - i as f32 * 7.2
+                    };
+                    let height = if is_modern { 6.4 } else { 5.4 };
+                    p.fill(
+                        rect(x, y, 38.0, height),
+                        if is_modern { [31, 38, 46] } else { EDGE },
+                        if is_modern { 0.9 } else { 0.55 },
+                    );
                     if let Some(value) = value {
                         let level = (pedal_percent(value) / 10.0 - i as f32).clamp(0.0, 1.0);
                         if level > 0.0 {
                             p.fill(
-                                rect(x, y + 5.4 * (1.0 - level), 38.0, 5.4 * level),
+                                rect(x, y + height * (1.0 - level), 38.0, height * level),
                                 rgb,
                                 1.0,
                             );
                         }
                     }
                 }
-                p.text(label, rect(x - 9.0, 141.0, 56.0, 13.0), HudLabel, WHITE);
+                p.text(
+                    label,
+                    rect(x - 9.0, if is_modern { 146.0 } else { 141.0 }, 56.0, 13.0),
+                    HudLabel,
+                    WHITE,
+                );
                 if value.is_none() {
                     p.text("--", rect(x, 115.0, 38.0, 22.0), HudNumber, MUTED);
                 }
@@ -309,30 +344,57 @@ impl Halo {
         }
 
         // The MFD fuel margin already accounts for the remaining race distance.
+        let fuel_x = if is_modern { 202.0 } else { 230.0 };
         p.rotated(
-            (260.0, 123.0),
-            if is_classic { -13.0 } else { halo_angle(260.0) },
+            (fuel_x + 30.0, 123.0),
+            if is_modern {
+                -10.0
+            } else if is_classic {
+                -13.0
+            } else {
+                halo_angle(260.0)
+            },
             |p| {
-                let pod = rect(230.0, 87.0, 59.0, 74.0);
-                p.rounded(pod, 10.0, INK, 0.9);
-                p.rounded_outline(pod, 10.0, EDGE, 0.9, 0.9);
-                p.text("FUEL", rect(230.0, 96.0, 59.0, 17.0), HudLabel, MUTED);
-                let value = rect(232.0, 112.0, 55.0, 39.0);
-                if let Some(laps) = fuel_margin(status) {
-                    p.textf(
-                        format_args!("{} {:.1}", fuel_sign(laps), laps.abs()),
-                        value,
-                        HudFuel,
-                        WHITE,
-                    );
-                } else {
-                    p.text("--", value, HudFuel, MUTED);
-                }
+                p.scaled(
+                    (fuel_x + 30.0, 128.0),
+                    if is_modern { 1.2 } else { 1.0 },
+                    |p| {
+                        if !is_modern {
+                            let pod = rect(fuel_x, 87.0, 59.0, 74.0);
+                            p.rounded(pod, 10.0, INK, 0.9);
+                            p.rounded_outline(pod, 10.0, EDGE, 0.9, 0.9);
+                        }
+                        p.text(
+                            "FUEL",
+                            rect(fuel_x, if is_modern { 108.0 } else { 96.0 }, 59.0, 17.0),
+                            HudLabel,
+                            MUTED,
+                        );
+                        let value = rect(
+                            fuel_x + 2.0,
+                            if is_modern { 124.0 } else { 112.0 },
+                            55.0,
+                            39.0,
+                        );
+                        if let Some(laps) = fuel_margin(status) {
+                            p.textf(
+                                format_args!("{} {:.1}", fuel_sign(laps), laps.abs()),
+                                value,
+                                HudFuel,
+                                WHITE,
+                            );
+                        } else {
+                            p.text("--", value, HudFuel, MUTED);
+                        }
+                    },
+                );
             },
         );
 
         if is_classic {
             self.classic.draw_wings(p, tel, status, aero, settings);
+        } else if is_modern {
+            self.modern.draw_wings(p, tel, status, aero, settings);
         } else {
             self.draw_wide_wings(p, tel, status, aero, settings);
         }
