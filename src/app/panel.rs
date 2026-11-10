@@ -323,7 +323,7 @@ impl Panel {
             &["60 FPS", "120 FPS", "Monitor refresh"],
         )?;
         self.button("Demo (simulated data)", DEMO, 916, 399, 240, true)?;
-        self.button("Hide Halo in rear view", REAR_VIEW, 916, 448, 240, true)?;
+        self.button("Hide Halo: rear / sides", REAR_VIEW, 916, 448, 240, true)?;
         self.control(
             w!("STATIC"),
             "Waiting for UDP",
@@ -966,8 +966,8 @@ unsafe extern "system" fn panel_proc(
     }
     match message {
         WM_INPUT => {
-            if let Some((device, down)) = rear_view::read_raw(HRAWINPUT(lparam.0 as *mut _)) {
-                overlay::push(Action::ControllerAxis(device, down));
+            if let Some((device, axes)) = rear_view::read_raw(HRAWINPUT(lparam.0 as *mut _)) {
+                overlay::push(Action::ControllerAxes(device, axes));
             }
         }
         WM_INPUT_DEVICE_CHANGE => {

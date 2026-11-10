@@ -67,17 +67,19 @@ Il comando conserva posizione e preferenze di visibilità dei singoli HUD;
 alla riapertura dell'app la visibilità globale riparte attiva. Quando gli HUD
 sono nascosti la ricezione continua, mentre il rendering si arresta.
 
-**Hide Halo in rear view**, attivo per impostazione iniziale, usa lo **stick
-destro del controller PS5 verso il basso**, senza premere R3: Halo scompare
-mentre lo tieni abbassato e torna al rilascio. Il mini HUD pneumatici resta visibile secondo le
-sue preferenze. Funziona con entrambi i modelli Halo durante la guida, con F1 25
+**Hide Halo: rear / sides**, attivo per impostazione iniziale, usa lo **stick
+destro del controller PS5 verso il basso, a destra o a sinistra**, senza premere
+R3: Halo scompare mentre guardi indietro o ai lati e torna quando riporti lo
+stick al centro. Il mini HUD pneumatici resta visibile secondo le sue preferenze.
+Funziona con tutti i modelli Halo durante la guida, con F1 25
 in primo piano; in Demo ed Edit resta disattivato. La casella nel pannello,
 seguita da **Apply and save**, permette di disabilitarlo. Non cambia le
 preferenze di visibilità manuale: un Halo già nascosto rimane nascosto.
 
 Supporta DualSense USB/Bluetooth e controller esposti tramite XInput da Steam
-Input. Il comando del gioco deve essere assegnato allo stick destro verso il
-basso e tornare alla visuale anteriore al rilascio.
+Input. I comandi del gioco per guardare indietro, a destra e a sinistra devono
+essere assegnati alle rispettive direzioni dello stick destro e tornare alla
+visuale anteriore al rilascio.
 
 | Modalità / controllo | Comportamento |
 | --- | --- |

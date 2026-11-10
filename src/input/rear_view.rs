@@ -26,34 +26,35 @@ thread_local! {
     static DEVICES: RefCell<HashMap<usize, bool>> = RefCell::new(HashMap::new());
 }
 
-fn axis_from_report(report: &[u8]) -> Option<f32> {
+fn axes_from_report(report: &[u8]) -> Option<[f32; 2]> {
     let y = match report.first()? {
-        0x01 if matches!(report.len(), 10 | 64 | 78) => report[4],
-        0x31 if report.len() == 78 => report[5],
+        0x01 if matches!(report.len(), 10 | 64 | 78) => 4,
+        0x31 if report.len() == 78 => 5,
         _ => return None,
-    } as f32;
-    Some(if y >= 128.0 {
-        (y - 128.0) / 127.0
-    } else {
-        (y - 128.0) / 128.0
-    })
+    };
+    Some([report[y - 1], report[y]].map(|value| {
+        let centered = value as f32 - 128.0;
+        centered / if value >= 128 { 127.0 } else { 128.0 }
+    }))
 }
 
-fn latest_axis(data: &[u8], stride: usize, count: usize) -> Option<f32> {
+fn latest_axes(data: &[u8], stride: usize, count: usize) -> Option<[f32; 2]> {
     if stride == 0 || count == 0 || stride.checked_mul(count)? > data.len() {
         return None;
     }
     data[..stride * count]
         .chunks_exact(stride)
-        .filter_map(axis_from_report)
+        .filter_map(axes_from_report)
         .next_back()
 }
 
-pub fn held(was_held: bool, eligible: bool, axis: Option<f32>) -> bool {
+pub fn held(was_held: bool, eligible: bool, axes: Option<[f32; 2]>) -> bool {
     eligible
-        && axis.is_some_and(|value| {
-            value.is_finite()
-                && (-1.0..=1.0).contains(&value)
+        && axes.is_some_and(|[horizontal, down]| {
+            let value = horizontal.abs().max(down);
+            [horizontal, down]
+                .iter()
+                .all(|axis| axis.is_finite() && (-1.0..=1.0).contains(axis))
                 && if was_held {
                     value > 0.35
                 } else {
@@ -101,7 +102,7 @@ pub fn forget_device(device: usize) {
     });
 }
 
-pub fn read_raw(handle: HRAWINPUT) -> Option<(usize, f32)> {
+pub fn read_raw(handle: HRAWINPUT) -> Option<(usize, [f32; 2])> {
     let mut storage = [0u64; 128];
     let mut size = size_of::<[u64; 128]>() as u32;
     // Read during WM_INPUT dispatch, before DefWindowProc releases the handle.
@@ -131,18 +132,18 @@ pub fn read_raw(handle: HRAWINPUT) -> Option<(usize, f32)> {
             copied as usize - offset,
         )
     };
-    latest_axis(bytes, hid.dwSizeHid as usize, hid.dwCount as usize)
-        .map(|down| (raw.header.hDevice.0 as usize, down))
+    latest_axes(bytes, hid.dwSizeHid as usize, hid.dwCount as usize)
+        .map(|axes| (raw.header.hDevice.0 as usize, axes))
 }
 
 pub struct RearInput {
-    raw: Option<(usize, f32, Instant)>,
+    raw: Option<(usize, [f32; 2], Instant)>,
     xinput_slot: Option<u32>,
     next_scan: Instant,
     foreground: Option<(HWND, u32, bool)>,
     pub raw_registered: bool,
     pub raw_samples: u64,
-    pub last_axis: Option<f32>,
+    pub last_axes: Option<[f32; 2]>,
     pub source: &'static str,
 }
 
@@ -155,7 +156,7 @@ impl Default for RearInput {
             foreground: None,
             raw_registered: false,
             raw_samples: 0,
-            last_axis: None,
+            last_axes: None,
             source: "none",
         }
     }
@@ -177,9 +178,9 @@ impl RearInput {
         Ok(())
     }
 
-    pub fn receive(&mut self, device: usize, axis: f32, now: Instant) {
-        self.raw = Some((device, axis, now));
-        self.last_axis = Some(axis);
+    pub fn receive(&mut self, device: usize, axes: [f32; 2], now: Instant) {
+        self.raw = Some((device, axes, now));
+        self.last_axes = Some(axes);
         self.source = "DualSense HID";
         self.raw_samples = self.raw_samples.saturating_add(1);
     }
@@ -187,43 +188,43 @@ impl RearInput {
     pub fn remove(&mut self, device: usize) {
         if self.raw.is_some_and(|(id, _, _)| id == device) {
             self.raw = None;
-            self.last_axis = None;
+            self.last_axes = None;
             self.source = "none";
             self.xinput_slot = None;
             self.next_scan = Instant::now() + Duration::from_secs(1);
         }
     }
 
-    fn recent_raw(&self, now: Instant) -> Option<f32> {
+    fn recent_raw(&self, now: Instant) -> Option<[f32; 2]> {
         self.raw
             .filter(|(_, _, received)| now.saturating_duration_since(*received) <= RAW_TTL)
-            .map(|(_, axis, _)| axis)
+            .map(|(_, axes, _)| axes)
     }
 
-    pub fn poll(&mut self, now: Instant) -> Option<f32> {
-        if let Some(axis) = self.recent_raw(now) {
+    pub fn poll(&mut self, now: Instant) -> Option<[f32; 2]> {
+        if let Some(axes) = self.recent_raw(now) {
             self.source = "DualSense HID";
-            self.last_axis = Some(axis);
-            return Some(axis);
+            self.last_axes = Some(axes);
+            return Some(axes);
         }
         if let Some(slot) = self.xinput_slot {
-            if let Some(axis) = xinput_axis(slot) {
+            if let Some(axes) = xinput_axes(slot) {
                 self.source = "XInput / Steam Input";
-                self.last_axis = Some(axis);
-                return Some(axis);
+                self.last_axes = Some(axes);
+                return Some(axes);
             }
             self.xinput_slot = None;
         }
         self.source = "none";
-        self.last_axis = None;
+        self.last_axes = None;
         if now >= self.next_scan {
             self.next_scan = now + Duration::from_secs(1);
             for slot in 0..4 {
-                if let Some(axis) = xinput_axis(slot) {
+                if let Some(axes) = xinput_axes(slot) {
                     self.xinput_slot = Some(slot);
                     self.source = "XInput / Steam Input";
-                    self.last_axis = Some(axis);
-                    return Some(axis);
+                    self.last_axes = Some(axes);
+                    return Some(axes);
                 }
             }
         }
@@ -247,12 +248,19 @@ impl RearInput {
     }
 }
 
-fn xinput_axis(slot: u32) -> Option<f32> {
+fn axes_from_xinput(gamepad: &XINPUT_GAMEPAD) -> [f32; 2] {
+    [
+        gamepad.sThumbRX as f32 / 32768.0,
+        -(gamepad.sThumbRY as f32) / 32768.0,
+    ]
+}
+
+fn xinput_axes(slot: u32) -> Option<[f32; 2]> {
     let mut state = XINPUT_STATE::default();
     if unsafe { XInputGetState(slot, &mut state) } != 0 {
         return None;
     }
-    Some((-(state.Gamepad.sThumbRY as f32) / 32768.0).clamp(-1.0, 1.0))
+    Some(axes_from_xinput(&state.Gamepad))
 }
 
 fn game_process(pid: u32) -> bool {
@@ -290,10 +298,17 @@ mod tests {
             let mut report = vec![128; length];
             report[0] = id;
             report[y] = 255;
-            assert_eq!(axis_from_report(&report), Some(1.0));
+            assert_eq!(axes_from_report(&report), Some([0.0, 1.0]));
             report[y] = 0;
-            assert_eq!(axis_from_report(&report), Some(-1.0));
+            assert_eq!(axes_from_report(&report), Some([0.0, -1.0]));
             report[y] = 128;
+            for (x, expected) in [(0, -1.0), (255, 1.0)] {
+                report[y - 1] = x;
+                assert_eq!(axes_from_report(&report), Some([expected, 0.0]));
+                assert!(held(false, true, axes_from_report(&report)));
+            }
+            report[y - 1] = 128;
+            report[y - 3] = 255;
             report[y - 2] = 255;
             report[6] = 255;
             report[7] = 255;
@@ -302,53 +317,117 @@ mod tests {
             if id == 0x31 {
                 report[10] = 255;
             }
-            assert_eq!(axis_from_report(&report), Some(0.0));
+            assert_eq!(axes_from_report(&report), Some([0.0, 0.0]));
         }
-        assert_eq!(axis_from_report(&[]), None);
-        assert_eq!(axis_from_report(&[0x31; 77]), None);
-        assert_eq!(axis_from_report(&[1; 63]), None);
-        assert_eq!(axis_from_report(&[2; 64]), None);
+        assert_eq!(axes_from_report(&[]), None);
+        assert_eq!(axes_from_report(&[0x31; 77]), None);
+        assert_eq!(axes_from_report(&[1; 63]), None);
+        assert_eq!(axes_from_report(&[2; 64]), None);
+    }
+
+    #[test]
+    fn xinput_uses_right_stick_axes_and_preserves_down_direction() {
+        for (x, y) in [(i16::MIN, 0), (i16::MAX, 0), (0, i16::MIN)] {
+            let gamepad = XINPUT_GAMEPAD {
+                sThumbRX: x,
+                sThumbRY: y,
+                ..Default::default()
+            };
+            assert!(held(false, true, Some(axes_from_xinput(&gamepad))));
+        }
+        let gamepad = XINPUT_GAMEPAD {
+            sThumbLX: i16::MAX,
+            sThumbLY: i16::MIN,
+            wButtons: XINPUT_GAMEPAD_RIGHT_THUMB,
+            ..Default::default()
+        };
+        assert_eq!(axes_from_xinput(&gamepad), [0.0, 0.0]);
+        assert!(!held(false, true, Some(axes_from_xinput(&gamepad))));
+        assert!(!held(
+            false,
+            true,
+            Some(axes_from_xinput(&XINPUT_GAMEPAD {
+                sThumbRY: i16::MAX,
+                ..Default::default()
+            }))
+        ));
     }
 
     #[test]
     fn batched_reports_use_the_release_and_reject_invalid_sizes() {
         let mut reports = [128u8; 20];
         reports[0] = 1;
+        reports[3] = 255;
         reports[4] = 255;
         reports[10] = 1;
-        assert_eq!(latest_axis(&reports, 10, 2), Some(0.0));
-        assert_eq!(latest_axis(&reports, 0, 2), None);
-        assert_eq!(latest_axis(&reports, 10, 0), None);
-        assert_eq!(latest_axis(&reports, 10, 3), None);
-        assert_eq!(latest_axis(&reports, usize::MAX, 2), None);
+        assert_eq!(latest_axes(&reports, 10, 2), Some([0.0, 0.0]));
+        assert_eq!(latest_axes(&reports, 0, 2), None);
+        assert_eq!(latest_axes(&reports, 10, 0), None);
+        assert_eq!(latest_axes(&reports, 10, 3), None);
+        assert_eq!(latest_axes(&reports, usize::MAX, 2), None);
     }
 
     #[test]
     fn hold_has_hysteresis_and_clears_on_release_disabled_context_or_lost_input() {
-        assert!(!held(false, true, Some(0.1)));
-        assert!(held(false, true, Some(0.6)));
-        assert!(held(true, true, Some(0.45)));
-        assert!(!held(false, true, Some(0.45)));
-        assert!(!held(true, true, Some(0.35)));
-        assert!(!held(true, true, Some(0.0)));
-        assert!(!held(true, true, Some(-1.0)));
-        assert!(!held(true, false, Some(1.0)));
+        for direction in [[0.0_f32, 1.0], [-1.0, 0.0], [1.0, 0.0]] {
+            let axes = |amount| Some(direction.map(|value| value * amount));
+            assert!(!held(false, true, axes(0.1)));
+            assert!(held(false, true, axes(0.55)));
+            assert!(held(true, true, axes(0.45)));
+            assert!(!held(false, true, axes(0.45)));
+            assert!(!held(true, true, axes(0.35)));
+            assert!(!held(true, true, axes(0.0)));
+            assert!(!held(true, false, axes(1.0)));
+        }
+        assert!(!held(true, true, Some([0.0, -1.0])));
         assert!(!held(true, true, None));
-        assert!(!held(true, true, Some(f32::NAN)));
+        for invalid in [f32::NAN, f32::INFINITY, -1.1, 1.1] {
+            assert!(!held(true, true, Some([invalid, 1.0])));
+            assert!(!held(true, true, Some([1.0, invalid])));
+        }
+    }
+
+    #[test]
+    fn side_look_stays_hidden_until_center_and_preserves_hud_preferences() {
+        use crate::settings::Settings;
+
+        for visible in [false, true] {
+            let mut settings = Settings::default();
+            settings.halo.visible = visible;
+            let before = serde_json::to_value(&settings).unwrap();
+            let mut hidden = false;
+            for (axes, expected) in [
+                ([-1.0, 0.0], true),
+                ([-0.7, 0.7], true),
+                ([0.0, 1.0], true),
+                ([0.7, 0.7], true),
+                ([1.0, 0.0], true),
+                ([0.45, 0.0], true),
+                ([0.0, 0.0], false),
+                ([-0.45, 0.0], false),
+            ] {
+                hidden = held(hidden, true, Some(axes));
+                assert_eq!(hidden, expected);
+                let layouts = settings.effective_layouts(true, hidden);
+                assert_eq!(layouts[0].visible, visible && !expected);
+                assert_eq!(layouts[1].visible, settings.tyres.visible);
+            }
+            assert_eq!(serde_json::to_value(&settings).unwrap(), before);
+        }
     }
 
     #[test]
     fn stale_or_disconnected_native_input_cannot_leave_halo_hidden() {
         let now = Instant::now();
         let mut input = RearInput::default();
-        input.receive(7, 1.0, now);
-        assert_eq!(input.recent_raw(now + RAW_TTL), Some(1.0));
+        input.receive(7, [-1.0, 0.0], now);
+        assert_eq!(input.recent_raw(now + RAW_TTL), Some([-1.0, 0.0]));
         assert_eq!(
             input.recent_raw(now + RAW_TTL + Duration::from_millis(1)),
             None
         );
         input.remove(8);
-        assert_eq!(input.recent_raw(now), Some(1.0));
+        assert_eq!(input.recent_raw(now), Some([-1.0, 0.0]));
         input.remove(7);
         assert_eq!(input.recent_raw(now), None);
     }

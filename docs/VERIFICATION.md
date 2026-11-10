@@ -1,5 +1,21 @@
 # Local verification
 
+## Halo nelle visuali laterali — 10 novembre 2026
+
+Il filtro della visuale posteriore ora nasconde Halo anche spostando lo stick
+destro a destra o a sinistra. Halo torna al centro; i passaggi diagonali fra
+retro e lati mantengono il filtro attivo. Il pannello mostra **Hide Halo: rear /
+sides**. La preferenza esistente `hide_halo_rear_view` conserva il proprio valore.
+
+Passati **69 test**, rustfmt, Clippy `--all-targets -D warnings` e build Release.
+I controlli coprono entrambi gli assi DualSense USB/Bluetooth e XInput, soglie
+55%/35%, rilascio, input scaduto o rimosso, direzioni diagonali e conservazione
+delle preferenze Halo e pneumatici. Stick sinistro e clic R3 non attivano il filtro.
+
+Avvio Demo di 3 secondi: **167 frame**, registrazione Raw Input riuscita e zero
+errori di presentazione. [Report](../artifacts/halo-side-view-smoke.json).
+Non sono stati provati un controller fisico e una sessione nel gioco.
+
 ## Responsive Settings window — 9 November 2026
 
 Settings now supports dragging native window edges and corners, maximizing,

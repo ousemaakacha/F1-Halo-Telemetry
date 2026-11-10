@@ -511,12 +511,12 @@ impl App {
             && !self.demo
             && self.snapshot.driving(now)
             && self.rear_input.game_focused();
-        let axis = if eligible {
+        let axes = if eligible {
             self.rear_input.poll(now)
         } else {
             None
         };
-        let hidden = rear_view::held(self.rear_hidden, eligible, axis);
+        let hidden = rear_view::held(self.rear_hidden, eligible, axes);
         if hidden != self.rear_hidden {
             let previous = self.rear_hidden;
             self.rear_hidden = hidden;
@@ -707,8 +707,8 @@ impl App {
     fn action(&mut self, action: Action) -> Result<(), String> {
         match action {
             Action::Dirty => self.dirty = true,
-            Action::ControllerAxis(device, down) => {
-                self.rear_input.receive(device, down, Instant::now())
+            Action::ControllerAxes(device, axes) => {
+                self.rear_input.receive(device, axes, Instant::now())
             }
             Action::ControllerRemoved(device) => self.rear_input.remove(device),
             Action::Quit => self.quit = true,
@@ -935,7 +935,8 @@ impl App {
             "rear_view_enabled": self.settings.hide_halo_rear_view,
             "controller": { "raw_registered": self.rear_input.raw_registered,
                 "raw_samples": self.rear_input.raw_samples, "source": self.rear_input.source,
-                "right_stick_down": self.rear_input.last_axis },
+                "right_stick_down": self.rear_input.last_axes.map(|axes| axes[1]),
+                "right_stick_horizontal": self.rear_input.last_axes.map(|axes| axes[0]) },
             "elapsed_seconds": self.start.elapsed().as_secs_f64(),
             "adapter": self.graphics.as_ref().map(|g| &g.adapter_name),
             "fps_limit_hz": self.settings.fps.hz(self.monitor_hz),

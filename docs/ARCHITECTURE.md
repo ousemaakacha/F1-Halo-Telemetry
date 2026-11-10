@@ -77,16 +77,18 @@ un conflitto conserva entrambe le combinazioni precedenti. Il comando globale di
 visibilità applica un filtro ai layout senza sovrascrivere le preferenze salvate;
 quando il filtro nasconde gli HUD non vengono effettuati draw o Present.
 
-`input/rear_view` legge soltanto l'asse verticale destro del DualSense tramite
+`input/rear_view` legge i due assi dello stick destro del DualSense tramite
 Raw Input HID (USB e i due formati Bluetooth), con fallback XInput per i pad
 virtuali Steam Input. Il pannello registra joystick/gamepad con INPUTSINK e
 DEVNOTIFY: l'input del gioco non viene consumato. I report vengono letti durante
 WM_INPUT, prima di DefWindowProc; vengono accettati soltanto vendor/prodotto Sony
-e formati di lunghezza nota. La coda UI conserva asse e identificatore dispositivo,
+e formati di lunghezza nota. La coda UI conserva assi e identificatore dispositivo,
 senza riferimenti ai buffer Windows. La rimozione invalida subito il campione.
 
-La pressione verso il basso si attiva al 55% e si rilascia al 35%, evitando
-sfarfallii vicino alla soglia. Un campione HID scade dopo 500 ms; input assente,
+La pressione verso il basso, a destra o a sinistra si attiva al 55% e si rilascia
+al 35%, evitando sfarfallii vicino alla soglia. Il filtro usa il massimo fra il
+valore assoluto orizzontale e il valore verso il basso: resta attivo nei passaggi
+diagonali fra retro e lati. Un campione HID scade dopo 500 ms; input assente,
 telemetria scaduta, pausa, perdita del focus, Demo ed Edit ripristinano la
 visibilità. Il focus verifica soltanto nome e percorso del processo F1_25.exe.
 Durante la guida il timer ricontrolla al massimo ogni 16 ms, anche con il solo
@@ -97,7 +99,8 @@ La sospensione è un filtro temporaneo soltanto sul layout Halo. Draw, applicazi
 impostazioni e hotkey usano lo stesso filtro; i layout salvati e il mini HUD
 pneumatici rimangono indipendenti. `hide_halo_rear_view` è attivo per default anche
 nei profili precedenti, disattivabile dal pannello. La diagnostica esporta stato
-del filtro, registrazione Raw Input, conteggio campioni, sorgente e ultimo asse.
+del filtro, registrazione Raw Input, conteggio campioni, sorgente e ultimi assi
+(`right_stick_down` e `right_stick_horizontal`).
 Non viene dedotta la visuale dai flag UDP: il filtro segue il comando concordato
 con l'utente, quindi richiede la stessa assegnazione nel gioco.
 
