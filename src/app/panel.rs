@@ -2,6 +2,7 @@ mod layout;
 mod theme;
 
 use crate::{
+    branding::Icon,
     input::rear_view,
     overlay::{self, Action, wide},
     settings::*,
@@ -77,34 +78,55 @@ fn layout_decimal(text: &str, current: f32, label: &str) -> std::result::Result<
     }
 }
 
+fn opacity_percent(text: &str, current: f32) -> std::result::Result<f32, String> {
+    let percent: f32 = text
+        .trim()
+        .replace(',', ".")
+        .parse()
+        .map_err(|_| "Background: enter a percentage from 0 to 100")?;
+    if percent == (current * 100.0).round() {
+        Ok(current)
+    } else {
+        Ok(percent / 100.0)
+    }
+}
+
 pub struct Panel {
     pub hwnd: HWND,
     controls: BTreeMap<u16, HWND>,
     theme: Box<Theme>,
     dpi: u32,
     tray: bool,
+    icons: [Icon; 3],
     building_page: Option<Page>,
 }
 
 impl Panel {
     pub fn new() -> Result<Self> {
         let instance = unsafe { GetModuleHandleW(None)? };
-        let class = WNDCLASSW {
-            lpfnWndProc: Some(panel_proc),
-            hInstance: instance.into(),
-            lpszClassName: w!("F1HaloSettings"),
-            hCursor: unsafe { LoadCursorW(None, IDC_ARROW)? },
-            hIcon: unsafe { LoadIconW(None, IDI_APPLICATION)? },
-            ..Default::default()
-        };
-        if unsafe { RegisterClassW(&class) } == 0 {
-            return Err(windows::core::Error::from_thread());
-        }
         let mut cursor = POINT::default();
         unsafe {
             let _ = GetCursorPos(&mut cursor);
         }
         let dpi = overlay::monitor_dpi(cursor);
+        let icons = [
+            Icon::load(unsafe { GetSystemMetricsForDpi(SM_CXICON, dpi) })?,
+            Icon::load(unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) })?,
+            Icon::load(256)?,
+        ];
+        let class = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(panel_proc),
+            hInstance: instance.into(),
+            lpszClassName: w!("F1HaloSettings"),
+            hCursor: unsafe { LoadCursorW(None, IDC_ARROW)? },
+            hIcon: icons[0].0,
+            hIconSm: icons[1].0,
+            ..Default::default()
+        };
+        if unsafe { RegisterClassExW(&class) } == 0 {
+            return Err(windows::core::Error::from_thread());
+        }
         let factor = dpi as f32 / 96.0;
         let style = WS_OVERLAPPEDWINDOW | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN;
         let mut bounds = RECT {
@@ -149,9 +171,10 @@ impl Panel {
         let mut panel = Self {
             hwnd,
             controls: BTreeMap::new(),
-            theme: Box::new(Theme::new(dpi)),
+            theme: Box::new(Theme::new(dpi, icons[2].0)),
             dpi,
             tray: false,
+            icons,
             building_page: None,
         };
         panel.build()?;
@@ -362,7 +385,7 @@ impl Panel {
                 ("Position X", 1, 0, 266),
                 ("Position Y", 2, 138, 266),
                 ("Scale", 3, 0, 350),
-                ("Opacity", 4, 138, 350),
+                ("Background %", 4, 138, 350),
             ] {
                 self.label(label, x + dx, y, 122)?;
                 self.edit(base + offset, x + dx, y + 24, 122)?;
@@ -617,7 +640,7 @@ impl Panel {
         self.set(base + 1, &layout.x.to_string());
         self.set(base + 2, &layout.y.to_string());
         self.set(base + 3, &format!("{:.2}", layout.scale));
-        self.set(base + 4, &format!("{:.2}", layout.opacity));
+        self.set(base + 4, &format!("{:.0}", layout.opacity * 100.0));
     }
 
     pub fn populate_halo_geometry(&self, s: &Settings) {
@@ -692,7 +715,7 @@ impl Panel {
             layout.x = integer(base + 1, "X")?;
             layout.y = integer(base + 2, "Y")?;
             layout.scale = layout_decimal(&self.text(base + 3), layout.scale, "Scale")?;
-            layout.opacity = layout_decimal(&self.text(base + 4), layout.opacity, "Opacity")?;
+            layout.opacity = opacity_percent(&self.text(base + 4), layout.opacity)?;
         }
         s.tyre_mode = match self.selected(MODE) {
             0 => TyreMode::Surface,
@@ -773,7 +796,7 @@ impl Panel {
     pub fn change_dpi(&mut self, dpi: u32, suggested: RECT) {
         self.dpi = dpi.max(96);
         let factor = self.dpi as f32 / 96.0;
-        let mut theme = Box::new(Theme::new(self.dpi));
+        let mut theme = Box::new(Theme::new(self.dpi, self.icons[2].0));
         theme.page.set(self.theme.page.get());
         theme.inputs.clone_from(&self.theme.inputs);
         theme.children.clone_from(&self.theme.children);
@@ -929,7 +952,7 @@ impl Panel {
             uID: 1,
             uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
             uCallbackMessage: TRAY_MESSAGE,
-            hIcon: unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() },
+            hIcon: self.icons[1].0,
             ..Default::default()
         };
         let text = wide("F1 Halo Telemetry · double-click: settings");
@@ -1343,6 +1366,39 @@ mod tests {
         assert!(!read.hide_halo_rear_view);
         assert_eq!(read.halo.scale, settings.halo.scale);
         assert_eq!(read.tyres.opacity, settings.tyres.opacity);
+        assert_opacity_controls_validate_percent_and_keep_unedited_precision(&panel);
+    }
+
+    fn assert_opacity_controls_validate_percent_and_keep_unedited_precision(panel: &Panel) {
+        let mut settings = Settings::default();
+        settings.halo.opacity = 0.938_7;
+        settings.tyres.opacity = 0.456_7;
+        panel.populate(&settings, false);
+        assert_eq!(panel.text(HALO + 4), "94");
+        assert_eq!(panel.text(TYRES + 4), "46");
+        let unchanged = panel.read(&settings).unwrap();
+        assert_eq!(unchanged.halo.opacity, settings.halo.opacity);
+        assert_eq!(unchanged.tyres.opacity, settings.tyres.opacity);
+
+        panel.set(HALO + 4, "100");
+        panel.set(TYRES + 4, "0");
+        let changed = panel.read(&settings).unwrap();
+        assert_eq!(changed.halo.opacity, 1.0);
+        assert_eq!(changed.tyres.opacity, 0.0);
+        let saved: Settings =
+            serde_json::from_str(&serde_json::to_string(&changed).unwrap()).unwrap();
+        assert_eq!(saved.halo.opacity, 1.0);
+        assert_eq!(saved.tyres.opacity, 0.0);
+
+        panel.set(TYRES + 4, "48,5");
+        assert_eq!(panel.read(&settings).unwrap().tyres.opacity, 0.485);
+        for id in [HALO + 4, TYRES + 4] {
+            for invalid in ["-1", "101", "NaN", "inf", "invalid", ""] {
+                panel.populate(&settings, false);
+                panel.set(id, invalid);
+                assert!(panel.read(&settings).is_err(), "Accepted {invalid}");
+            }
+        }
     }
 
     #[test]

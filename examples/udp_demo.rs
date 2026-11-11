@@ -16,7 +16,7 @@ fn main() -> std::io::Result<()> {
     let seconds = std::env::args().nth(3).and_then(|v| v.parse::<f64>().ok());
     let socket = UdpSocket::bind("127.0.0.1:0")?;
     let start = Instant::now();
-    let mut buffer = [0u8; 1448];
+    let mut buffer = [0u8; f1_halo_telemetry::telemetry::protocol::HISTORY_SIZE];
     let pacer = f1_halo_telemetry::udp::Pacer::new();
     println!("SIMULATORE UDP ESPLICITO: {destination}, {frequency} Hz; Ctrl+C per terminare.");
     for frame in 1u32.. {

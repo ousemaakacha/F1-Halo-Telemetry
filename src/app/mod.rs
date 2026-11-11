@@ -258,7 +258,7 @@ impl App {
         let graphics = Graphics::new().map_err(|e| e.to_string())?;
         let halo = Halo::new(&graphics.geometry_factory).map_err(|e| e.to_string())?;
         let tyre_car = graphics
-            .bitmap(include_bytes!("../../assets/tyre-car.png"))
+            .bitmap(include_bytes!("../../assets/tyre-car-transparent.png"))
             .map_err(|e| e.to_string())?;
         for (index, overlay) in self.overlays.iter().enumerate() {
             let (width, height) = overlay.size();
@@ -457,7 +457,7 @@ impl App {
                 (hud::tyres::WIDTH, hud::tyres::HEIGHT)
             };
             let painter = surface
-                .begin(base_width, base_height, layout.opacity)
+                .begin(base_width, base_height)
                 .map_err(|e| e.to_string())?;
             if index == 0 {
                 self.halo.as_ref().unwrap().draw(
@@ -582,7 +582,7 @@ impl App {
                 }
             }
         }
-        self.panel.result(if edit { "EDIT: drag HUDs; resize at corners. Wheel: scale; Shift+wheel: opacity. Hotkey for Race Mode." }
+        self.panel.result(if edit { "EDIT: drag HUDs; resize at corners. Wheel: scale; Shift+wheel: background. Hotkey for Race Mode." }
             else { "RACE: HUDs pass clicks through. The game keeps focus. Press the hotkey to edit." });
         Ok(())
     }
@@ -753,8 +753,7 @@ impl App {
                     &mut self.settings.tyres
                 };
                 if opacity {
-                    layout.opacity =
-                        (layout.opacity + delta as f32 / 120.0 * 0.05).clamp(0.15, 1.0);
+                    layout.opacity = (layout.opacity + delta as f32 / 120.0 * 0.05).clamp(0.0, 1.0);
                 } else {
                     layout.scale = (layout.scale + delta as f32 / 120.0 * 0.05).clamp(0.35, 3.0);
                 }
@@ -908,12 +907,13 @@ impl App {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let c = self.snapshot.counters;
+        let now = Instant::now();
         let report = serde_json::json!({
             "application": crate::APPLICATION_NAME, "version": env!("CARGO_PKG_VERSION"),
             "halo_model": self.settings.halo_model,
             "active_halo_profile": self.settings.active_halo_profile,
             "source": if self.demo { "demo" } else { "udp" },
-            "connection_state": self.snapshot.connection(Instant::now()).label(),
+            "connection_state": self.snapshot.connection(now).label(),
             "socket_error": self.snapshot.socket_error,
             "source_epoch": self.snapshot.source_epoch,
             "ers_capacity": self.snapshot.ers_capacity.map(|c| serde_json::json!({
@@ -923,6 +923,15 @@ impl App {
             "ers_energy_joules": self.snapshot.status.map(|s| s.value.ers_joules),
             "ers_deploy_mode": self.snapshot.status.map(|s| s.value.deploy_mode),
             "fuel_margin_laps": self.snapshot.status.map(|s| s.value.fuel_remaining_laps),
+            "gear": self.snapshot.telemetry.map(|t| t.value.gear),
+            "speed_kmh": self.snapshot.telemetry.map(|t| t.value.speed_kmh),
+            "lap_delta_ms": self.snapshot.lap_delta_ms(now),
+            "lap_history": self.snapshot.lap_history.map(|h| serde_json::json!({
+                "completed_laps": h.value.completed_laps,
+                "last_lap_ms": h.value.last_lap_ms,
+                "best_before_last_ms": h.value.best_before_last_ms,
+            })),
+            "background_opacity": { "halo": self.settings.halo.opacity, "tyres": self.settings.tyres.opacity },
             "straight_mode": self.snapshot.aero.map(|a| serde_json::json!({
                 "active": a.value.straight, "available": a.value.available,
                 "activation_distance_m": a.value.activation_distance_m,

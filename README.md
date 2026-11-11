@@ -16,6 +16,11 @@ della memoria di F1 25.
 Il sorgente include app, esempi, test, script e documentazione. Impostazioni
 salvate in `%LOCALAPPDATA%\F1HaloTelemetry\settings.json`.
 
+Il logo monoposto e telemetria è incorporato nell'eseguibile e compare nel
+pannello, nelle icone delle finestre e nell'area di notifica. L'immagine scelta
+è conservata in `assets/app-logo.png`; `assets/app.ico` contiene le risoluzioni
+Windows da 16 a 256 px.
+
 ## Avvio
 
 Aprire `dist/F1-Halo-Telemetry/f1-halo-telemetry.exe`, oppure l'eseguibile in
@@ -86,7 +91,7 @@ visuale anteriore al rilascio.
 | Race Mode | Finestre trasparenti, topmost, click-through e senza attivazione |
 | Edit Mode | Cornice e angoli visibili; trascinamento libero; resize proporzionale |
 | Rotella sopra un HUD in Edit | Modifica scala |
-| Shift + rotella in Edit | Modifica opacità |
+| Shift + rotella in Edit | Modifica opacità del fondo |
 | Doppio clic sul mini HUD in Edit | Alterna Surface, Inner e Both |
 | Esc con un HUD attivo in Edit | Torna a Race Mode |
 | Clic destro in Edit | Menu rapido con visibilità, modalità gomme, Demo e impostazioni |
@@ -107,15 +112,22 @@ passano sotto le impostazioni nei formati più stretti. Cambiare categoria conse
 le modifiche non ancora applicate; **Apply and save** salva tutti i campi.
 I colori mostrano un campione accanto al valore esadecimale.
 
+In **Halo & layout**, ciascun overlay ha il campo **Background %**: puoi impostare
+Halo e Tyres separatamente dallo **0% al 100%**. Il controllo modifica soltanto
+il fondo: scritte, numeri, immagine auto e indicatori mantengono la loro opacità.
+Aumenta il valore per ridurre la trasparenza del fondo, oppure usa **0%** per
+eliminarlo. Premi **Apply and save**. Le percentuali vengono ripristinate al
+riavvio; i file impostazioni precedenti restano compatibili.
+
 **Halo model** permette di scegliere **Wide**, **Classic** oppure **modern**.
 Modern segue il nuovo riferimento: fascia antracite continua con gradiente,
 estremità arrotondate, bordo arancione, arco superiore sottile e quadrante più
-grande. Fuel, Straight Mode, Active Aero e marce restano integrati nella fascia.
+grande. Fuel, Straight Mode, delta giro e marce restano integrati nella fascia.
 Premere **Apply and save**: il cambio avviene
 senza riavviare l'app e conserva centro del quadrante, posizione, scala e opacità.
 La scelta viene salvata e ripristinata all'avvio. I profili precedenti usano Wide.
 Tutti i modelli mostrano le stesse telemetrie aggiornate: km/h, percentuale e
-modalità ERS, Fuel, pedali, Straight Mode con distanza, Aero, marce e RPM.
+modalità ERS, Fuel, pedali, Straight Mode con distanza, delta giro, marce e RPM.
 
 **Halo profile** salva posizioni e dimensioni diverse con nomi scelti da te,
 per esempio **Ferrari** e **Red Bull**:
@@ -150,10 +162,12 @@ più larghe; il canvas misura 1000 × 300 unità. Quadrante e caratteri conserva
 le proprie dimensioni, mentre i contenuti laterali seguono la nuova curva.
 Classico riprende le ali compatte e inclinate e il profilo superiore bianco.
 I due modelli condividono il canvas, i colori configurabili e tutti i dati guida.
-Il quadrante centrale mostra velocità in km/h e percentuale ERS. La percentuale
+Il quadrante centrale mantiene la velocità grande in km/h. Al posto della
+scritta KM/H, sopra la velocità mostra la marcia corrente **R/N/1–8**; sotto,
+la percentuale ERS. La percentuale
 diventa azzurra quando Overtake è disponibile in zona, anche prima di attivare il
 boost, e torna bianca quando la disponibilità termina. Non compare una targhetta
-Overtake separata. Pedali a segmenti, Straight Mode e Active Aero sull'ala sinistra;
+Overtake separata. Pedali a segmenti, Straight Mode e delta giro sull'ala sinistra;
 marce e scala RPM seguono la curva dell'ala destra. Il piccolo riquadro **FUEL**
 a sinistra dei pedali mostra il margine carburante live del MFD rispetto alla
 distanza di gara rimanente, con segno e un decimale: **+ 2.3** oppure **- 0.8**.
@@ -169,10 +183,20 @@ legacy non viene usato per rappresentarli. Con vetture pre-2026 compare N/A.
 La fascia sinistra mostra **SM OFF** insieme alla distanza in metri comunicata
 dal gioco, aggiornata mentre ci si avvicina alla zona. Quando la disponibilità
 viene confermata compare **SM READY**; dopo l'attivazione compare **SM ON**
-con fondo verde. Una distanza pari a zero non implica disponibilità.
+in verde. Una distanza pari a zero non implica disponibilità.
 Senza dati recenti compare **SM --**; sulle vetture pre-2026 **SM N/A**.
 Sotto la batteria compare la modalità ERS corrente: **NONE**, **MEDIUM**,
-**HOTLAP** oppure **BOOST**. La stessa scritta è rimossa da sotto Active Aero.
+**HOTLAP** oppure **BOOST**.
+
+La riga che mostrava **AERO STRAIGHT/CORNER** ora mostra il delta fra l'ultimo
+giro completato e il miglior giro personale valido precedente della sessione:
+**+ 0.230** in rosso se più lento, **- 0.120** in verde se più rapido. Un nuovo
+record viene confrontato con quello precedente, così conserva il miglioramento
+negativo. Il pareggio **+ 0.000** è neutro. Il valore resta riferito all'ultimo
+giro concluso e viene rinnovato al successivo. Al primo giro valido, con ultimo
+giro invalido, dati mancanti o cronologia scaduta compare **--**.
+Straight Mode e delta seguono il contorno sinistro lettera per lettera in tutti
+i modelli. Il confronto si azzera al cambio sessione o dopo un flashback.
 Pannello impostazioni, menu, messaggi e diagnostica dell'app sono in inglese.
 Le scritte decorative HALO/26 e LIVE sono rimosse. Demo, attesa e anomalie
 conservano un'indicazione compatta, visibile soltanto quando necessaria.
@@ -185,6 +209,8 @@ modificabili, non una dichiarazione sulla finestra ottimale di ogni mescola.
 
 La percentuale nell'intestazione **TYRES** è la media aritmetica dell'usura delle
 quattro gomme. Con dati assenti o scaduti compare **--%**.
+Il disegno dell'auto ha fondo trasparente: condivide la stessa tonalità del
+riquadro pneumatici, anche quando cambi l'opacità dell'overlay.
 
 La specifica trasmette energia ERS in **Joule**, ma non definisce la capacità
 totale della batteria. L'app legge automaticamente la **capacità nominale dai
@@ -247,7 +273,7 @@ Da PowerShell 7, nella cartella del progetto:
 
 `-Bootstrap` installa Rust in ambito utente quando manca, senza modificare il
 PATH permanente. Per GNU scarica LLVM-MinGW 20261104 dalla release ufficiale,
-verifica SHA256 ed estrae soltanto dlltool e le sue DLL nella cartella `.cache`.
+verifica SHA256 ed estrae dlltool, llvm-rc, llvm-cvtres e le loro DLL nella cartella `.cache`.
 I componenti servono alla compilazione e non vanno distribuiti con l'app.
 `Cargo.lock` viene rispettato mediante `--locked`.
 

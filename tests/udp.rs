@@ -1,6 +1,6 @@
 use f1_halo_telemetry::{
     settings::Settings,
-    telemetry::{CapacitySource, Connection, demo},
+    telemetry::{CapacitySource, Connection, Packet, demo},
     udp::Receiver,
 };
 use std::{
@@ -28,16 +28,24 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
     })
     .unwrap();
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut buffer = [0u8; 1448];
+    let mut buffer = [0u8; f1_halo_telemetry::telemetry::protocol::HISTORY_SIZE];
     let start = Instant::now();
     let mut received = false;
+    let mut frame = 120;
     while start.elapsed() < Duration::from_secs(3) {
-        let length = demo::encode(demo::sample(2.0, 120)[0], &mut buffer);
-        sender
-            .send_to(&buffer[..length], ("127.0.0.1", port))
-            .unwrap();
+        // Exercise UDP lap timing without triggering unrelated game-asset discovery.
+        for packet in demo::sample(2.0, frame)
+            .into_iter()
+            .filter(|packet| matches!(packet, Packet::Telemetry(..) | Packet::History(..)))
+        {
+            let length = demo::encode(packet, &mut buffer);
+            sender
+                .send_to(&buffer[..length], ("127.0.0.1", port))
+                .unwrap();
+        }
+        frame += 1;
         std::thread::sleep(Duration::from_millis(20));
-        if receiver.shared.read().unwrap().telemetry.is_some() {
+        if receiver.shared.read().unwrap().lap_delta_ms(Instant::now()) == Some(230) {
             received = true;
             break;
         }
@@ -60,6 +68,7 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
         let cleared = *receiver.shared.read().unwrap();
         assert!(cleared.ers_capacity.is_none());
         assert!(cleared.aero.is_none());
+        assert!(cleared.lap_history.is_none());
         assert!(cleared.telemetry.is_none());
         assert_eq!(cleared.source_epoch, 2);
     }

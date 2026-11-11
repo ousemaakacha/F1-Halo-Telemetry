@@ -46,6 +46,7 @@ Player 255 non indicizza gli array e viene ignorato. Indici 24–254 sono invali
 | 6 | Car Telemetry | 1448 | 59 | Menu |
 | 7 | Car Status | 1445 | 59 | Menu |
 | 10 | Car Damage | 1133 | 46 | 10 Hz nel capitolo specifico |
+| 11 | Session History | 1460 | 14 per giro | 20 Hz complessivi, vetture a rotazione |
 | 16 | Car Telemetry 2 | 269 | 10 | Menu |
 
 Per gli ID letti vengono verificate versione 1 e lunghezza esatta, compresi i
@@ -60,7 +61,16 @@ Offset relativi all'inizio del record vettura:
 | Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvest limit f32=50; networkPaused u8=58 |
 | Car Damage | wear[4] f32=0,4,8,12 |
 | Car Telemetry 2 | aeroMode u8=0; aeroAvailable u8=1; aeroDistance u16=2; overtakeAvailable u8=4; overtakeActive u8=5; overtakeDistance u16=6; regulations2026 u8=8 |
-| Lap Data | resultStatus u8=45 |
+| Lap Data | currentLapNum u8=33; resultStatus u8=45 |
+
+Session History usa offset assoluti: `carIdx` u8=29, `numLaps` u8=30,
+`numTyreStints` u8=31, numeri dei giri migliori u8=32–35. I record dei giri
+iniziano a 36 e hanno stride 14: tempo u32 a offset 0 e validità u8 a offset 13.
+Il bit 0 identifica un giro valido. `numLaps` comprende il giro parziale corrente,
+che viene escluso dal confronto. Si accettano soltanto la vettura locale,
+massimo 100 record e 8 stint; conteggi, indici migliori e flag riservati sono
+validati. Il delta è ultimo giro concluso meno miglior giro valido precedente.
+L'ultimo giro invalido o l'assenza di un riferimento non producono un delta.
 
 Session usa gamePaused a offset corpo 14 e formula a offset corpo 8.
 Il carburante usa direttamente `m_fuelRemainingLaps`, il valore del MFD:

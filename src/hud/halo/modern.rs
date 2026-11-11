@@ -2,6 +2,7 @@ use super::*;
 
 const RADIUS: f32 = 710.0;
 const BAND_DEPTH: f32 = 76.0;
+const TEXT_ROWS: [f32; 2] = [-53.0, -20.0];
 
 fn edge(x: f32, offset: f32) -> f32 {
     153.0 + RADIUS - ((RADIUS - offset).powi(2) - (x - CENTER_X).powi(2)).sqrt()
@@ -15,11 +16,21 @@ fn left_edge(depth: f32) -> f32 {
     42.0 + 48.0 * depth - 24.0 * depth * depth
 }
 
+fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
+    TextCurve::new((0..=96).map(|i| {
+        let x = start + (end - start) * i as f32 / 96.0;
+        (x, edge(x, offset))
+    }))
+}
+
 pub(super) struct Modern {
     body: ID2D1PathGeometry,
     brow: ID2D1PathGeometry,
     top: ID2D1PathGeometry,
     lower_edge: ID2D1PathGeometry,
+    straight_text: TextCurve,
+    delta_text: TextCurve,
+    fuel_text: [TextCurve; 2],
     rpm_segments: [((f32, f32), (f32, f32)); 48],
 }
 
@@ -38,6 +49,9 @@ impl Modern {
             )?,
             top: arc(factory, 42.0, 798.0, -BAND_DEPTH)?,
             lower_edge: arc(factory, 66.0, 774.0, 0.0)?,
+            straight_text: left_text_curve(42.0, 196.0, TEXT_ROWS[0]),
+            delta_text: left_text_curve(42.0, 196.0, TEXT_ROWS[1]),
+            fuel_text: TEXT_ROWS.map(|offset| left_text_curve(202.0, 262.0, offset)),
             rpm_segments: std::array::from_fn(|i| {
                 let x = 566.0 + i as f32 * 194.0 / 48.0;
                 let next = 566.0 + (i + 1) as f32 * 194.0 / 48.0;
@@ -46,8 +60,8 @@ impl Modern {
         })
     }
 
-    pub fn draw_frame(&self, p: &Painter<'_>, accent: [u8; 3]) {
-        p.material_geometry(&self.body);
+    pub fn draw_frame(&self, p: &Painter<'_>, accent: [u8; 3], opacity: f32) {
+        p.material_geometry(&self.body, opacity);
         p.stroke_geometry(&self.top, [111, 123, 133], 0.5, 0.16);
         p.stroke_geometry(&self.brow, [5, 8, 12], 2.0, 0.25);
         p.stroke_geometry(&self.brow, [204, 211, 218], 0.75, 0.68);
@@ -62,40 +76,24 @@ impl Modern {
         tel: Option<CarTelemetry>,
         status: Option<CarStatus>,
         aero: Option<Aero>,
+        delta: Option<i64>,
         settings: &Settings,
     ) {
         let sm_active = aero.is_some_and(|a| a.regulations_2026 && a.straight);
-        let sm_x = 129.0;
-        let sm_y = edge(sm_x, -53.0);
-        p.rotated((sm_x, sm_y), angle(sm_x, -53.0), |p| {
-            draw_straight_mode(
-                p,
-                aero,
-                rect(sm_x - 92.0, sm_y - 13.0, 184.0, 26.0),
-                if sm_active {
-                    settings.colours.throttle
-                } else if aero.is_some() {
-                    WHITE
-                } else {
-                    MUTED
-                },
-            );
-        });
-        let (mode, rgb) = aero_state(aero, settings);
-        for (x, width, label, font) in [
-            (95.0, 74.0, "AERO", HudNumber),
-            (180.0, 84.0, mode, HudLabel),
-        ] {
-            let y = edge(x, -20.0);
-            p.rotated((x, y), angle(x, -20.0), |p| {
-                p.text(
-                    label,
-                    rect(x - width / 2.0, y - 13.0, width, 26.0),
-                    font,
-                    rgb,
-                );
-            });
-        }
+        draw_straight_mode(
+            p,
+            aero,
+            &self.straight_text,
+            if sm_active {
+                settings.colours.throttle
+            } else if aero.is_some() {
+                WHITE
+            } else {
+                MUTED
+            },
+        );
+        draw_lap_delta(p, delta, &self.delta_text, settings);
+        draw_fuel(p, status, &self.fuel_text, 1.2);
         for i in 0..9 {
             let gear = if i == 0 && tel.is_some_and(|t| t.gear == -1) {
                 -1
@@ -220,6 +218,25 @@ fn arc(factory: &ID2D1Factory1, left: f32, right: f32, offset: f32) -> Result<ID
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fuel_and_sm_follow_the_same_two_rows() {
+        let factory: ID2D1Factory1 =
+            unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).unwrap() };
+        let modern = Modern::new(&factory).unwrap();
+        for (row, offset) in TEXT_ROWS.into_iter().enumerate() {
+            let sm_curve = if row == 0 {
+                &modern.straight_text
+            } else {
+                &modern.delta_text
+            };
+            for curve in [sm_curve, &modern.fuel_text[row]] {
+                let (x, y) = curve.centre();
+                let radius = (x - CENTER_X).hypot(y - 153.0 - RADIUS);
+                assert!((radius - (RADIUS - offset)).abs() < 0.02);
+            }
+        }
+    }
 
     #[test]
     fn continuous_band_is_symmetric_and_keeps_live_values_inside_the_canvas() {

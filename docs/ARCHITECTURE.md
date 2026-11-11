@@ -24,9 +24,20 @@ mantiene il passaggio tra thread in codice Rust sicuro senza una nuova dipendenz
 o un buffer lock-free scritto con unsafe. La contesa riguarda soltanto la copia
 di una struttura piccola; le misure locali sono nel documento di verifica.
 
+Session History viene filtrato con `carIdx == playerCarIndex`. Il parser scorre
+al massimo 100 record, esclude il giro parziale finale e conserva soltanto il
+tempo dell'ultimo giro valido completato e il miglior tempo valido precedente.
+Il delta usa millisecondi interi con segno, senza arrotondamenti floating point.
+Lap Data fornisce il numero del giro corrente: finché la cronologia non coincide
+con il nuovo giro concluso, il delta resta assente. Cronologia più vecchia di
+5 secondi, guida inattiva e assenza di un riferimento valido producono `--`.
+Reset, cambio sorgente/sessione e flashback svuotano anche questi campi.
+
 ## Rendering e composizione
 
-Il mini HUD pneumatici usa `assets/tyre-car.png`, incorporato nell'eseguibile.
+Il mini HUD pneumatici usa `assets/tyre-car-transparent.png`, incorporato
+nell'eseguibile. Il fondo trasparente lascia visibile soltanto il fondo uniforme
+del pannello; `assets/tyre-car.png` conserva l'immagine originale.
 Windows Imaging Component decodifica il PNG in BGRA premoltiplicato una volta
 per device. Direct2D riutilizza la bitmap, conserva le proporzioni verticali
 e la ricrea insieme alle altre risorse grafiche dopo un reset.
@@ -43,8 +54,19 @@ Un device Direct3D 11 hardware con BGRA support è condiviso dalle due superfici
 Ogni HUD ha una swap chain composition BGRA8, due buffer, alpha premoltiplicato,
 flip sequential e latenza massima di coda 1. Direct2D disegna direttamente sul
 backbuffer DXGI; DirectWrite gestisce il testo con antialias grayscale adatto
-alla trasparenza. DirectComposition collega la superficie all'HWND e applica
-l'opacità. Non viene usato `UpdateLayeredWindow` né un upload CPU del framebuffer.
+alla trasparenza. DirectComposition collega la superficie all'HWND. L'opacità
+viene applicata soltanto alle primitive di fondo e al brush del materiale Modern;
+testo, bitmap auto, contorni e indicatori mantengono la propria opacità.
+Non viene usato `UpdateLayeredWindow` né un upload CPU del framebuffer.
+Nel pannello **Background %** accetta 0–100; nel JSON `Layout.opacity` resta un
+valore 0.00–1.00. Applicare un campo invariato conserva la precisione originale,
+anche se la percentuale visualizzata è arrotondata.
+
+Le righe sinistre SM e delta usano `TextCurve`, campionata dalla stessa geometria
+circolare o Bézier del modello. I glifi sono posizionati per lunghezza d'arco e
+ruotati sulla tangente locale. Gli avanzamenti dei caratteri DirectWrite sono
+misurati alla creazione del device; il rendering riusa questi valori e i buffer
+di testo sullo stack. I valori lunghi vengono ridotti per rientrare nella curva.
 
 Geometria Halo, segmenti curvi, formati testo e brush vengono creati una volta.
 Il testo variabile viene formattato in buffer sullo stack. Il brush viene

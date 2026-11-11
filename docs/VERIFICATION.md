@@ -1,5 +1,116 @@
 # Local verification
 
+## Straight Mode più compatto — 11 novembre 2026
+
+SM OFF, SM ON, SM READY e countdown metri usano un carattere dedicato da
+**19 px**, rispetto ai precedenti 22 px. Le quote delle righe restano condivise
+con FUEL e delta. Passati **77 test**, rustfmt, Clippy e build Release.
+Controllati con render nativo i tre stati e countdown da 700 e 65535 metri
+su Wide, Classic e Modern: le scritte restano nel contorno.
+[Anteprima countdown](../artifacts/hud-sm-countdown-preview.png).
+Non è stata eseguita una sessione nel gioco.
+
+## Due righe curve comuni per SM, delta e FUEL — 11 novembre 2026
+
+FUEL usa ora la stessa curva di SM; il valore carburante usa quella del delta.
+Ogni modello definisce una sola coppia di quote, condivisa dai due gruppi.
+FUEL e valore seguono la curva glifo per glifo, con le dimensioni precedenti;
+le quattro curve sono precalcolate alla creazione delle risorse grafiche.
+
+Passati **77 test**, rustfmt, Clippy `--all-targets -D warnings` e build Release.
+Il nuovo test verifica che i centri delle scritte SM e FUEL appartengano agli
+stessi due archi Modern. Il render nativo Direct2D è stato controllato con dati
+assenti, +2.3, -0.8 e +12.3 nei tre modelli.
+[Anteprima senza dati](../artifacts/fuel-rows-modern-waiting.png),
+[anteprima con dati simulati](../artifacts/fuel-rows-modern-positive.png).
+Non è stata eseguita una sessione nel gioco.
+
+## Allineamento FUEL al bordo Halo — 11 novembre 2026
+
+FUEL e valore carburante condividono la tangente del bordo inferiore nel punto
+occupato dal riquadro. Classic ricava l'angolo dalla stessa Bézier usata per
+disegnare il bordo; Modern riusa la tangente del proprio arco. Wide mantiene
+la tangente già esistente. Rimossi gli angoli fissi di Classic e Modern.
+
+Passati **76 test**, rustfmt, Clippy `--all-targets -D warnings` e build Release.
+Il nuovo test confronta la tangente Classic con la derivata della curva,
+inclusa la posizione FUEL. Controllati visivamente tutti e tre i modelli.
+Ogni Demo isolata dura **45 secondi**, con una ricreazione del device e zero
+errori di presentazione: [Classic](../artifacts/fuel-alignment-classic-smoke.json),
+[Modern](../artifacts/fuel-alignment-modern-smoke.json),
+[Wide](../artifacts/fuel-alignment-wide-smoke.json).
+Non è stata eseguita una sessione nel gioco.
+
+## Fondi indipendenti, testi curvi, delta giro e marcia — 10 novembre 2026
+
+Applicati i criteri del meta prompt: modifiche comuni ai tre modelli, riuso
+delle impostazioni esistenti, separazione di fondo e contenuti, curve ricavate
+dalla geometria reale e confronto basato soltanto su tempi validi della sessione.
+Confermati dall'utente fondo 0–100% e velocità grande con marcia sopra.
+
+**Background %** e Shift + rotella ora modificano soltanto i fondi di Halo e
+Tyres. Scritte, numeri, bitmap auto e indicatori restano nitidi anche a 0%.
+SM e delta seguono la curva sinistra glifo per glifo in Wide, Classic e Modern.
+La marcia R/N/1–8 sostituisce KM/H sopra il numero grande della velocità.
+
+Il delta sostituisce AERO STRAIGHT/CORNER: ultimo giro completato meno miglior
+giro valido precedente, con tre decimali. Rosso se più lento, verde se più
+rapido, neutro al pareggio. Giri invalidi, primo riferimento assente e dati
+scaduti mostrano `--`. Un record nuovo conserva il confronto con quello vecchio.
+Parser Session History verificato sulla specifica EA v1.2 e sulle strutture
+ufficiali. Sono coperti vettura locale, record parziale, flag di validità,
+conteggi, ultimo slot, tempi nulli, reset sessione, flashback e attesa del nuovo
+giro. Il test UDP invia telemetria e cronologia sulla socket reale e verifica
+il delta di 230 ms e la cancellazione al cambio sorgente.
+
+Passati **75 test**, rustfmt, Clippy `--all-targets -D warnings`, build Release
+e build degli esempi. Controllati visivamente i tre modelli, segni positivo e
+negativo, pareggio, marcia centrale, fondi 0/100 e pannello in finestra ridotta.
+Demo isolata di **248 secondi**: **14.625 frame**, una ricreazione del device,
+zero errori di presentazione. [Report](../artifacts/halo-refinement-ui-smoke.json).
+Non è stata eseguita una sessione nel gioco.
+
+## Opacità percentuale e fondo Tyres uniforme — 10 novembre 2026
+
+In **Halo & layout**, i campi **Opacity %** permettono di regolare Halo e Tyres
+separatamente dal 15% al 100%. Valori maggiori riducono la trasparenza. Restano
+compatibili i file impostazioni esistenti; applicare un valore non modificato
+conserva la precisione precedente alla visualizzazione arrotondata.
+
+Il disegno auto ora usa `assets/tyre-car-transparent.png`: il fondo originale
+è rimosso con imagegen e il pannello fornisce una sola tonalità. Il PNG originale
+è conservato. [Prompt e provenienza](TYRE-CAR-IMAGEGEN.md).
+
+Passati **70 test**, rustfmt, Clippy `--all-targets -D warnings` e build Release.
+Estesa la verifica del pannello nativo con percentuali indipendenti, limiti
+15/100, virgola decimale, valori non validi, salvataggio e precisione invariata.
+Controllati visivamente campi e fondo uniforme al 100% e al 45%.
+
+Demo isolata di **152 secondi**: **9.093 frame**, una ricreazione del device
+e zero errori di presentazione. Il comando **Apply and save** ha salvato Halo
+al 100% e Tyres al 45% nella configurazione di prova.
+[Report](../artifacts/opacity-background-ui-smoke.json).
+Non è stata eseguita una sessione nel gioco.
+
+## Logo monoposto e telemetria — 10 novembre 2026
+
+Il PNG scelto è copiato senza modifiche in `assets/app-logo.png`. La conversione
+ICO conserva trasparenza e proporzioni e include 10 dimensioni da 16 a 256 px.
+Le risorse Windows sono incorporate nell'eseguibile: il nuovo simbolo compare
+nel pannello, nella barra del titolo, nelle icone delle finestre e nella tray.
+Gli handle creati sono rilasciati alla chiusura e il logo resta disponibile
+quando il pannello ricrea il tema al cambio DPI.
+
+Passati **70 test**, rustfmt, Clippy `--all-targets -D warnings` e build Release
+GNU x64. Il nuovo test carica dal modulo tutte le 10 dimensioni e verifica
+dimensioni effettive e profondità colore a 32 bit. Verificata nel PE la presenza
+di 10 risorse ICON e una GROUP_ICON. Controllato visivamente il logo nel pannello
+e nella barra del titolo dell'eseguibile distribuito.
+
+Avvio Demo isolato di **33 secondi**: **1.962 frame** e zero errori di
+presentazione. [Report](../artifacts/logo-smoke.json). La verifica usa una
+configurazione temporanea. Non sono stati provati MSVC e una sessione nel gioco.
+
 ## Halo nelle visuali laterali — 10 novembre 2026
 
 Il filtro della visuale posteriore ora nasconde Halo anche spostando lo stick

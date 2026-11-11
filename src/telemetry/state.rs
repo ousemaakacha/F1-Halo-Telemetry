@@ -1,8 +1,9 @@
-use super::{Aero, CarStatus, CarTelemetry, Damage, ErsCapacity, Header, Packet};
+use super::{Aero, CarStatus, CarTelemetry, Damage, ErsCapacity, Header, LapHistory, Packet};
 use std::time::{Duration, Instant};
 
 pub const FAST_TTL: Duration = Duration::from_millis(500);
 pub const DAMAGE_TTL: Duration = Duration::from_secs(2);
+pub const HISTORY_TTL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Connection {
@@ -70,6 +71,8 @@ pub struct Snapshot {
     pub damage: Option<Timed<Damage>>,
     pub aero: Option<Timed<Aero>>,
     pub lap_status: Option<Timed<u8>>,
+    pub current_lap: Option<Timed<u8>>,
+    pub lap_history: Option<Timed<LapHistory>>,
     pub session_paused: Option<Timed<bool>>,
     pub formula: Option<u8>,
     pub participants: Option<u8>,
@@ -116,12 +119,26 @@ impl Snapshot {
         matches!(self.connection(now), Connection::Live | Connection::Demo)
     }
 
+    pub fn lap_delta_ms(&self, now: Instant) -> Option<i64> {
+        let history = self.lap_history?;
+        if !self.driving(now)
+            || !history.fresh(now, HISTORY_TTL)
+            || self.current_lap.is_some_and(|lap| {
+                lap.value == 0 || lap.value.saturating_sub(1) != history.value.completed_laps
+            })
+        {
+            return None;
+        }
+        history.value.delta_ms()
+    }
+
     pub fn freshness_mask(&self, now: Instant) -> u16 {
         (self.driving(now) as u16)
             | ((self.status.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 1)
             | ((self.damage.is_some_and(|x| x.fresh(now, DAMAGE_TTL)) as u16) << 2)
             | ((self.aero.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 3)
             | ((self.connection(now) as u16) << 4)
+            | ((self.lap_history.is_some_and(|x| x.fresh(now, HISTORY_TTL)) as u16) << 8)
     }
 }
 
@@ -149,6 +166,8 @@ impl TelemetryState {
         self.snapshot.damage = None;
         self.snapshot.aero = None;
         self.snapshot.lap_status = None;
+        self.snapshot.current_lap = None;
+        self.snapshot.lap_history = None;
         self.snapshot.session_paused = None;
         self.snapshot.formula = None;
         self.snapshot.participants = None;
@@ -255,7 +274,13 @@ impl TelemetryState {
                 self.snapshot.session_paused = timed!(paused);
                 self.snapshot.formula = Some(formula);
             }
-            Packet::Lap(_, v) => self.snapshot.lap_status = timed!(v),
+            Packet::Lap(_, status, number) => {
+                self.snapshot.lap_status = timed!(status);
+                self.snapshot.current_lap = timed!(number);
+            }
+            Packet::History(_, history) if !self.ended => {
+                self.snapshot.lap_history = timed!(history)
+            }
             Packet::Participants(_, n) => self.snapshot.participants = Some(n),
             Packet::Event(_, code) => match &code {
                 b"SEND" => {

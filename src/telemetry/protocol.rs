@@ -9,6 +9,20 @@ pub const TELEMETRY_SIZE: usize = 1448;
 pub const STATUS_SIZE: usize = 1445;
 pub const DAMAGE_SIZE: usize = 1133;
 pub const AERO_SIZE: usize = 269;
+pub const HISTORY_SIZE: usize = 1460;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LapHistory {
+    pub completed_laps: u8,
+    pub last_lap_ms: Option<u32>,
+    pub best_before_last_ms: Option<u32>,
+}
+
+impl LapHistory {
+    pub fn delta_ms(self) -> Option<i64> {
+        Some(i64::from(self.last_lap_ms?) - i64::from(self.best_before_last_ms?))
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Header {
@@ -69,7 +83,8 @@ pub enum Packet {
     Damage(Header, Damage),
     Aero(Header, Aero),
     Session(Header, bool, u8),
-    Lap(Header, u8),
+    Lap(Header, u8, u8),
+    History(Header, LapHistory),
     Participants(Header, u8),
     Event(Header, [u8; 4]),
     Ignored(Header),
@@ -83,7 +98,8 @@ impl Packet {
             | Self::Damage(h, _)
             | Self::Aero(h, _)
             | Self::Session(h, _, _)
-            | Self::Lap(h, _)
+            | Self::Lap(h, _, _)
+            | Self::History(h, _)
             | Self::Participants(h, _)
             | Self::Event(h, _)
             | Self::Ignored(h) => h,
@@ -167,6 +183,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
         6 => TELEMETRY_SIZE,
         7 => STATUS_SIZE,
         10 => DAMAGE_SIZE,
+        11 => HISTORY_SIZE,
         16 => AERO_SIZE,
         _ => 0,
     };
@@ -287,7 +304,47 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
             if result > 7 {
                 return Err(ParseError::InvalidValue("resultStatus"));
             }
-            Packet::Lap(h, result)
+            Packet::Lap(h, result, b[HEADER_SIZE + 57 * index + 33])
+        }
+        11 => {
+            let car = b[29];
+            if car as usize >= CAR_COUNT {
+                return Err(ParseError::InvalidValue("historyCarIndex"));
+            }
+            if car != player {
+                return Ok(Packet::Ignored(h));
+            }
+            let laps = b[30] as usize;
+            if laps > 100 || b[31] > 8 || b[32..36].iter().any(|&lap| lap as usize > laps) {
+                return Err(ParseError::InvalidValue("historyCounts"));
+            }
+            let mut history = LapHistory {
+                // The final history record is the current, incomplete lap.
+                completed_laps: laps.saturating_sub(1) as u8,
+                ..LapHistory::default()
+            };
+            for lap in 0..laps {
+                let offset = 36 + lap * 14;
+                let valid = b[offset + 13];
+                if valid & !0x0f != 0 {
+                    return Err(ParseError::InvalidValue("lapValidBitFlags"));
+                }
+                if lap >= history.completed_laps as usize {
+                    continue;
+                }
+                let time = u32_at(b, offset);
+                let time = (valid & 1 != 0 && time > 0).then_some(time);
+                if lap + 1 == history.completed_laps as usize {
+                    history.last_lap_ms = time;
+                } else if let Some(time) = time {
+                    history.best_before_last_ms = Some(
+                        history
+                            .best_before_last_ms
+                            .map_or(time, |best| best.min(time)),
+                    );
+                }
+            }
+            Packet::History(h, history)
         }
         4 => {
             if b[29] > 24 {

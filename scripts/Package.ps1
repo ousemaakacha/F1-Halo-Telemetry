@@ -25,7 +25,7 @@ if (Test-Path -LiteralPath (Join-Path $workspace 'artifacts')) {
 "$binaryHash  f1-halo-telemetry.exe" | Set-Content -LiteralPath (Join-Path $destination 'SHA256.txt') -Encoding ascii
 $archive = Join-Path $workspace 'dist\F1-Halo-Telemetry.zip'
 Compress-Archive -LiteralPath $destination -DestinationPath $archive -Force
-$sourcePaths = @('Cargo.toml', 'Cargo.lock', '.gitignore', 'LICENSE', 'README.md', 'assets', 'src', 'tests', 'benches', 'examples', 'scripts', 'docs', 'artifacts') | ForEach-Object { Join-Path $workspace $_ }
+$sourcePaths = @('Cargo.toml', 'Cargo.lock', 'build.rs', '.gitignore', 'LICENSE', 'README.md', 'assets', 'src', 'tests', 'benches', 'examples', 'scripts', 'docs', 'artifacts') | ForEach-Object { Join-Path $workspace $_ }
 $sourceArchive = Join-Path $workspace 'dist\F1-Halo-Telemetry-source.zip'
 Compress-Archive -LiteralPath $sourcePaths -DestinationPath $sourceArchive -Force
 Write-Output $archive

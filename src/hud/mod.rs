@@ -14,7 +14,7 @@ pub fn edit_frame(p: &Painter<'_>, width: f32, height: f32, accent: [u8; 3]) {
         p.fill(rect(x, y, 9.0, 9.0), accent, 1.0);
     }
     p.text(
-        "EDIT · drag · corners: scale · wheel: scale · Shift: opacity",
+        "EDIT · drag · corners: scale · wheel: scale · Shift: background",
         rect(12.0, height - 21.0, width - 24.0, 18.0),
         Font::Caption,
         MUTED,

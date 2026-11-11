@@ -138,6 +138,7 @@ impl Overlay {
             hInstance: instance.into(),
             lpszClassName: w!("F1HaloOverlay"),
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW)? },
+            hIcon: unsafe { LoadIconW(Some(instance.into()), crate::branding::ICON_RESOURCE)? },
             style: CS_DBLCLKS,
             ..Default::default()
         };

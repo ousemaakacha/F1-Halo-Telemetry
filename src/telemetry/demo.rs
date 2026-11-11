@@ -3,7 +3,7 @@ use super::protocol::*;
 
 pub const DEMO_ERS_CAPACITY: f32 = 4_000_000.0;
 
-pub fn sample(seconds: f32, frame: u32) -> [Packet; 4] {
+pub fn sample(seconds: f32, frame: u32) -> [Packet; 5] {
     let phase = (seconds * 0.33).sin();
     let zone_seconds = seconds.rem_euclid(18.0);
     let speed = (190.0 + phase * 125.0).max(0.0);
@@ -67,6 +67,18 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 4] {
                 regulations_2026: true,
             },
         ),
+        Packet::History(
+            Header { packet_id: 11, ..h },
+            LapHistory {
+                completed_laps: 2,
+                last_lap_ms: Some(match (seconds / 6.0) as u32 % 3 {
+                    0 => 90_230,
+                    1 => 89_880,
+                    _ => 90_000,
+                }),
+                best_before_last_ms: Some(90_000),
+            },
+        ),
     ]
 }
 
@@ -79,6 +91,7 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
         Packet::Status(..) => STATUS_SIZE,
         Packet::Damage(..) => DAMAGE_SIZE,
         Packet::Aero(..) => AERO_SIZE,
+        Packet::History(..) => HISTORY_SIZE,
         _ => return 0,
     };
     if buffer.len() < size {
@@ -98,6 +111,27 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
     b[23..27].copy_from_slice(&h.overall_frame.to_le_bytes());
     b[27] = h.player;
     b[28] = 255;
+    if let Packet::History(_, history) = packet {
+        if history.completed_laps > 99 {
+            return 0;
+        }
+        b[29] = h.player;
+        b[30] = history.completed_laps + 1;
+        if let Some(best) = history
+            .best_before_last_ms
+            .filter(|_| history.completed_laps > 1)
+        {
+            b[32] = 1;
+            b[36..40].copy_from_slice(&best.to_le_bytes());
+            b[49] = 0x0f;
+        }
+        if let Some(last) = history.last_lap_ms.filter(|_| history.completed_laps > 0) {
+            let offset = 36 + (history.completed_laps as usize - 1) * 14;
+            b[offset..offset + 4].copy_from_slice(&last.to_le_bytes());
+            b[offset + 13] = 0x0f;
+        }
+        return size;
+    }
     let stride = match packet {
         Packet::Damage(..) => 46,
         Packet::Aero(..) => 10,

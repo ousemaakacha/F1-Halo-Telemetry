@@ -282,8 +282,8 @@ impl Settings {
             if !layout.scale.is_finite() || !(0.35..=3.0).contains(&layout.scale) {
                 return Err("HUD scale: range 0.35–3.00".into());
             }
-            if !layout.opacity.is_finite() || !(0.15..=1.0).contains(&layout.opacity) {
-                return Err("HUD opacity: range 0.15–1.00".into());
+            if !layout.opacity.is_finite() || !(0.0..=1.0).contains(&layout.opacity) {
+                return Err("HUD background opacity: range 0–100%".into());
             }
         }
         if !self.temperature_min_c.is_finite()

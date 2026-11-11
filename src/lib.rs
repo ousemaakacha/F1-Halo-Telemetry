@@ -2,6 +2,8 @@ pub const APPLICATION_NAME: &str = "F1 Halo Telemetry";
 
 #[cfg(windows)]
 pub mod app;
+#[cfg(windows)]
+mod branding;
 pub mod diagnostics;
 pub mod game_data;
 #[cfg(windows)]

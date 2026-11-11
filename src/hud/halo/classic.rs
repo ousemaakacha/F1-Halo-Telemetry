@@ -1,9 +1,59 @@
 use super::*;
 
+const TOP: [(f32, f32); 4] = [(64.0, 188.0), (238.0, 55.0), (602.0, 55.0), (776.0, 188.0)];
+const TEXT_ROWS: [f32; 2] = [10.0, 34.0];
+const LOWER: [(f32, f32); 4] = [
+    (102.0, 246.0),
+    (274.0, 110.0),
+    (566.0, 110.0),
+    (738.0, 246.0),
+];
+
+fn curve_point(points: &[(f32, f32); 4], t: f32) -> (f32, f32) {
+    let weights = [
+        (1.0 - t).powi(3),
+        3.0 * t * (1.0 - t).powi(2),
+        3.0 * t * t * (1.0 - t),
+        t.powi(3),
+    ];
+    points
+        .iter()
+        .zip(weights)
+        .fold((0.0, 0.0), |(x, y), (&(px, py), weight)| {
+            (x + px * weight, y + py * weight)
+        })
+}
+
+pub(super) fn lower_angle(x: f32) -> f32 {
+    let (mut start, mut end) = (0.0, 1.0);
+    for _ in 0..16 {
+        let t = (start + end) / 2.0;
+        if curve_point(&LOWER, t).0 < x {
+            start = t;
+        } else {
+            end = t;
+        }
+    }
+    let t = (start + end) / 2.0;
+    let a = curve_point(&LOWER, t - 0.001);
+    let b = curve_point(&LOWER, t + 0.001);
+    (b.1 - a.1).atan2(b.0 - a.0).to_degrees()
+}
+
+fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
+    TextCurve::new((0..=96).map(|i| {
+        let (x, y) = curve_point(&TOP, start + (end - start) * i as f32 / 96.0);
+        (x, y + offset)
+    }))
+}
+
 pub(super) struct Classic {
     ribbon: ID2D1PathGeometry,
     brow: ID2D1PathGeometry,
     lower_edge: ID2D1PathGeometry,
+    straight_text: TextCurve,
+    delta_text: TextCurve,
+    fuel_text: [TextCurve; 2],
 }
 
 impl Classic {
@@ -11,9 +61,9 @@ impl Classic {
         Ok(Self {
             ribbon: bezier_path(
                 factory,
-                (64.0, 188.0),
+                TOP[0],
                 &[
-                    [(238.0, 55.0), (602.0, 55.0), (776.0, 188.0)],
+                    [TOP[1], TOP[2], TOP[3]],
                     [(776.0, 198.0), (776.0, 209.0), (776.0, 220.0)],
                     [(591.0, 119.0), (249.0, 119.0), (64.0, 220.0)],
                 ],
@@ -28,17 +78,15 @@ impl Classic {
                 ],
                 false,
             )?,
-            lower_edge: bezier_path(
-                factory,
-                (102.0, 246.0),
-                &[[(274.0, 110.0), (566.0, 110.0), (738.0, 246.0)]],
-                false,
-            )?,
+            lower_edge: bezier_path(factory, LOWER[0], &[[LOWER[1], LOWER[2], LOWER[3]]], false)?,
+            straight_text: left_text_curve(0.03, 0.27, TEXT_ROWS[0]),
+            delta_text: left_text_curve(0.03, 0.27, TEXT_ROWS[1]),
+            fuel_text: TEXT_ROWS.map(|offset| left_text_curve(0.26, 0.335, offset)),
         })
     }
 
-    pub fn draw_frame(&self, p: &Painter<'_>, accent: [u8; 3]) {
-        p.geometry(&self.ribbon, INK, 0.84);
+    pub fn draw_frame(&self, p: &Painter<'_>, accent: [u8; 3], opacity: f32) {
+        p.geometry(&self.ribbon, INK, opacity);
         p.stroke_geometry(&self.brow, WHITE, 0.9, 0.78);
         for (width, alpha) in [(20.0, 0.015), (12.0, 0.035), (5.0, 0.1), (1.6, 0.95)] {
             p.stroke_geometry(&self.lower_edge, accent, width, alpha);
@@ -51,44 +99,28 @@ impl Classic {
         tel: Option<CarTelemetry>,
         status: Option<CarStatus>,
         aero: Option<Aero>,
+        delta: Option<i64>,
         settings: &Settings,
     ) {
         let accent = settings.colours.accent;
         let sm_active = aero.is_some_and(|a| a.regulations_2026 && a.straight);
-        p.rotated((157.0, 171.0), -28.0, |p| {
-            let sm = rect(65.0, 151.0, 165.0, 20.0);
-            p.fill(
-                sm,
-                if sm_active {
-                    settings.colours.throttle
-                } else {
-                    INK
-                },
-                0.95,
-            );
-            p.outline(sm, EDGE, 0.8);
-            draw_straight_mode(
-                p,
-                aero,
-                rect(65.0, 149.0, 165.0, 23.0),
-                if sm_active {
-                    INK
-                } else if aero.is_some() {
-                    WHITE
-                } else {
-                    MUTED
-                },
-            );
-            let aero_panel = rect(65.0, 176.0, 165.0, 25.0);
-            p.fill(aero_panel, INK, 0.78);
-            p.outline(aero_panel, EDGE, 0.8);
-            let (mode, rgb) = aero_state(aero, settings);
-            p.text("AERO", rect(72.0, 175.0, 74.0, 26.0), HudNumber, rgb);
-            p.text(mode, rect(148.0, 181.0, 77.0, 15.0), HudLabel, rgb);
-        });
+        draw_straight_mode(
+            p,
+            aero,
+            &self.straight_text,
+            if sm_active {
+                settings.colours.throttle
+            } else if aero.is_some() {
+                WHITE
+            } else {
+                MUTED
+            },
+        );
+        draw_lap_delta(p, delta, &self.delta_text, settings);
+        draw_fuel(p, status, &self.fuel_text, 1.0);
         p.rotated((650.0, 160.0), 22.0, |p| {
             let wing = rect(550.0, 124.0, 224.0, 70.0);
-            p.rounded(wing, 10.0, INK, 0.8);
+            p.rounded(wing, 10.0, INK, settings.halo.opacity);
             p.rounded_outline(wing, 10.0, EDGE, 0.9, 0.85);
             p.text("GEARS", rect(615.0, 122.0, 94.0, 16.0), HudLabel, WHITE);
             for i in 0..9 {
@@ -176,5 +208,23 @@ pub(super) fn bezier_path(
         });
         sink.Close()?;
         Ok(path.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fuel_rotation_matches_the_lower_border_tangent() {
+        for t in [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0] {
+            let x = curve_point(&LOWER, t).0;
+            let dx = 516.0 + 720.0 * t - 720.0 * t * t;
+            let dy = -408.0 + 816.0 * t;
+            let expected = dy.atan2(dx).to_degrees();
+            assert!((lower_angle(x) - expected).abs() < 0.02);
+        }
+        let fuel_angle = lower_angle(260.0);
+        assert!((-20.0..-16.0).contains(&fuel_angle));
     }
 }

@@ -20,6 +20,7 @@ const CENTER_X: f32 = 420.0;
 const HALO_RADIUS: f32 = 800.0;
 const EDGE: [u8; 3] = [66, 86, 108];
 const INK: [u8; 3] = [14, 20, 29];
+const TEXT_ROWS: [f32; 2] = [-55.0, -25.0];
 
 const OVERTAKE_BLUE: [u8; 3] = [54, 193, 255];
 
@@ -55,20 +56,45 @@ fn straight_mode_distance(aero: Option<Aero>) -> Option<u16> {
     .map(|a| a.activation_distance_m)
 }
 
-fn draw_straight_mode(p: &Painter<'_>, aero: Option<Aero>, bounds: D2D_RECT_F, rgb: [u8; 3]) {
+fn draw_straight_mode(p: &Painter<'_>, aero: Option<Aero>, curve: &TextCurve, rgb: [u8; 3]) {
     if let Some(distance) = straight_mode_distance(aero) {
-        p.textf(format_args!("SM OFF  {distance} m"), bounds, HudNumber, rgb);
+        p.curved_textf(
+            format_args!("SM OFF  {distance} m"),
+            curve,
+            HudStraight,
+            rgb,
+        );
     } else {
-        p.text(straight_mode_label(aero), bounds, HudNumber, rgb);
+        p.curved_text(straight_mode_label(aero), curve, HudStraight, rgb);
     }
 }
 
-fn aero_state(aero: Option<Aero>, settings: &Settings) -> (&'static str, [u8; 3]) {
-    match aero {
-        Some(a) if a.regulations_2026 && a.straight => ("STRAIGHT", settings.colours.throttle),
-        Some(a) if a.regulations_2026 => ("CORNER", MUTED),
-        Some(_) => ("N/A", MUTED),
-        None => ("--", MUTED),
+fn lap_delta_colour(delta: Option<i64>, settings: &Settings) -> [u8; 3] {
+    match delta {
+        Some(value) if value < 0 => settings.colours.optimal,
+        Some(value) if value > 0 => settings.colours.hot,
+        Some(_) => WHITE,
+        None => MUTED,
+    }
+}
+
+fn draw_lap_delta(p: &Painter<'_>, delta: Option<i64>, curve: &TextCurve, settings: &Settings) {
+    let colour = lap_delta_colour(delta, settings);
+    if let Some(delta) = delta {
+        let millis = delta.unsigned_abs();
+        p.curved_textf(
+            format_args!(
+                "{} {}.{:03}",
+                if delta < 0 { "-" } else { "+" },
+                millis / 1000,
+                millis % 1000
+            ),
+            curve,
+            HudNumber,
+            colour,
+        );
+    } else {
+        p.curved_text("--", curve, HudNumber, colour);
     }
 }
 
@@ -90,6 +116,25 @@ fn fuel_margin(status: Option<CarStatus>) -> Option<f32> {
 
 fn fuel_sign(laps: f32) -> &'static str {
     if laps <= -0.05 { "-" } else { "+" }
+}
+
+fn draw_fuel(p: &Painter<'_>, status: Option<CarStatus>, curves: &[TextCurve; 2], scale: f32) {
+    p.scaled(curves[0].centre(), scale, |p| {
+        p.curved_text("FUEL", &curves[0], HudLabel, MUTED);
+    });
+    // The MFD fuel margin already accounts for the remaining race distance.
+    p.scaled(curves[1].centre(), scale, |p| {
+        if let Some(laps) = fuel_margin(status) {
+            p.curved_textf(
+                format_args!("{} {:.1}", fuel_sign(laps), laps.abs()),
+                &curves[1],
+                HudFuel,
+                WHITE,
+            );
+        } else {
+            p.curved_text("--", &curves[1], HudFuel, MUTED);
+        }
+    });
 }
 
 fn rpm_fraction(tel: Option<CarTelemetry>, status: Option<CarStatus>) -> Option<f32> {
@@ -123,6 +168,13 @@ fn halo_band_angle(x: f32, offset: f32) -> f32 {
         .to_degrees()
 }
 
+fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
+    TextCurve::new((0..=96).map(|i| {
+        let x = start + (end - start) * i as f32 / 96.0;
+        (x, halo_band_edge(x, offset))
+    }))
+}
+
 pub struct Halo {
     classic: classic::Classic,
     modern: modern::Modern,
@@ -130,7 +182,10 @@ pub struct Halo {
     brow: ID2D1PathGeometry,
     lower_edge: ID2D1PathGeometry,
     straight_band: ID2D1PathGeometry,
-    aero_band: ID2D1PathGeometry,
+    delta_band: ID2D1PathGeometry,
+    straight_text: TextCurve,
+    delta_text: TextCurve,
+    fuel_text: [TextCurve; 2],
     gear_band: ID2D1PathGeometry,
     rpm_segments: [((f32, f32), (f32, f32)); 48],
     dial: ID2D1PathGeometry,
@@ -147,7 +202,10 @@ impl Halo {
             brow: halo_path(factory, 0.0, 875.0, -82.0, None)?,
             lower_edge: halo_path(factory, 20.0, 825.0, 0.0, None)?,
             straight_band: halo_path(factory, 0.0, 224.0, -68.0, Some((6.0, 224.0, -42.0)))?,
-            aero_band: halo_path(factory, 10.0, 224.0, -38.0, Some((16.0, 224.0, -12.0)))?,
+            delta_band: halo_path(factory, 10.0, 224.0, -38.0, Some((16.0, 224.0, -12.0)))?,
+            straight_text: left_text_curve(43.0, 205.0, TEXT_ROWS[0]),
+            delta_text: left_text_curve(42.0, 210.0, TEXT_ROWS[1]),
+            fuel_text: TEXT_ROWS.map(|offset| left_text_curve(230.0, 289.0, offset)),
             gear_band: halo_path(factory, 550.0, 875.0, -72.0, Some((550.0, 825.0, -2.0)))?,
             rpm_segments: std::array::from_fn(|i| {
                 let x = 555.0 + i as f32 * 260.0 / 48.0;
@@ -211,11 +269,11 @@ impl Halo {
         let is_classic = settings.halo_model == HaloModel::Classic;
         let is_modern = settings.halo_model == HaloModel::Modern;
         if is_classic {
-            self.classic.draw_frame(p, accent);
+            self.classic.draw_frame(p, accent, settings.halo.opacity);
         } else if is_modern {
-            self.modern.draw_frame(p, accent);
+            self.modern.draw_frame(p, accent, settings.halo.opacity);
         } else {
-            p.geometry(&self.ribbon, INK, 0.84);
+            p.geometry(&self.ribbon, INK, settings.halo.opacity);
             p.stroke_geometry(&self.brow, EDGE, 0.9, 0.65);
 
             for (width, alpha) in [(20.0, 0.015), (12.0, 0.035), (5.0, 0.1), (1.6, 0.95)] {
@@ -235,7 +293,7 @@ impl Halo {
                 94.0,
                 if is_modern { 60.0 } else { 56.0 },
                 INK,
-                if is_modern { 0.97 } else { 0.94 },
+                settings.halo.opacity,
             );
             p.stroke_geometry(&self.dial, accent, 8.0, 0.06);
             p.stroke_geometry(&self.dial, accent, 2.2, 1.0);
@@ -248,7 +306,12 @@ impl Halo {
                     if on { 1.0 } else { 0.65 },
                 );
             }
-            p.text("KM/H", rect(383.0, 49.0, 74.0, 15.0), HudLabel, WHITE);
+            p.text(
+                tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
+                rect(383.0, 45.0, 74.0, 20.0),
+                HudNumber,
+                if tel.is_some() { WHITE } else { MUTED },
+            );
             p.line((390.0, 103.0), (450.0, 103.0), EDGE, 0.7, 0.6);
             if let Some(t) = tel {
                 p.textf(
@@ -343,60 +406,30 @@ impl Halo {
             });
         }
 
-        // The MFD fuel margin already accounts for the remaining race distance.
-        let fuel_x = if is_modern { 202.0 } else { 230.0 };
-        p.rotated(
-            (fuel_x + 30.0, 123.0),
-            if is_modern {
-                -10.0
-            } else if is_classic {
-                -13.0
-            } else {
-                halo_angle(260.0)
-            },
-            |p| {
-                p.scaled(
-                    (fuel_x + 30.0, 128.0),
-                    if is_modern { 1.2 } else { 1.0 },
-                    |p| {
-                        if !is_modern {
-                            let pod = rect(fuel_x, 87.0, 59.0, 74.0);
-                            p.rounded(pod, 10.0, INK, 0.9);
-                            p.rounded_outline(pod, 10.0, EDGE, 0.9, 0.9);
-                        }
-                        p.text(
-                            "FUEL",
-                            rect(fuel_x, if is_modern { 108.0 } else { 96.0 }, 59.0, 17.0),
-                            HudLabel,
-                            MUTED,
-                        );
-                        let value = rect(
-                            fuel_x + 2.0,
-                            if is_modern { 124.0 } else { 112.0 },
-                            55.0,
-                            39.0,
-                        );
-                        if let Some(laps) = fuel_margin(status) {
-                            p.textf(
-                                format_args!("{} {:.1}", fuel_sign(laps), laps.abs()),
-                                value,
-                                HudFuel,
-                                WHITE,
-                            );
-                        } else {
-                            p.text("--", value, HudFuel, MUTED);
-                        }
-                    },
-                );
-            },
-        );
+        if !is_modern {
+            p.rotated(
+                (260.0, 123.0),
+                if is_classic {
+                    classic::lower_angle(260.0)
+                } else {
+                    halo_angle(260.0)
+                },
+                |p| {
+                    let pod = rect(230.0, 87.0, 59.0, 74.0);
+                    p.rounded(pod, 10.0, INK, settings.halo.opacity);
+                    p.rounded_outline(pod, 10.0, EDGE, 0.9, 0.9);
+                },
+            );
+        }
 
         if is_classic {
-            self.classic.draw_wings(p, tel, status, aero, settings);
+            self.classic
+                .draw_wings(p, tel, status, aero, snapshot.lap_delta_ms(now), settings);
         } else if is_modern {
-            self.modern.draw_wings(p, tel, status, aero, settings);
+            self.modern
+                .draw_wings(p, tel, status, aero, snapshot.lap_delta_ms(now), settings);
         } else {
-            self.draw_wide_wings(p, tel, status, aero, settings);
+            self.draw_wide_wings(p, tel, status, aero, snapshot.lap_delta_ms(now), settings);
         }
 
         let connection = snapshot.connection(now);
@@ -419,19 +452,12 @@ impl Halo {
         tel: Option<CarTelemetry>,
         status: Option<CarStatus>,
         aero: Option<Aero>,
+        delta: Option<i64>,
         settings: &Settings,
     ) {
         let accent = settings.colours.accent;
         let sm_active = aero.is_some_and(|a| a.regulations_2026 && a.straight);
-        p.geometry(
-            &self.straight_band,
-            if sm_active {
-                settings.colours.throttle
-            } else {
-                INK
-            },
-            0.95,
-        );
+        p.geometry(&self.straight_band, INK, settings.halo.opacity);
         p.stroke_geometry(
             &self.straight_band,
             if sm_active {
@@ -442,39 +468,23 @@ impl Halo {
             0.8,
             0.9,
         );
-        let sm_y = halo_band_edge(124.0, -55.0);
-        p.rotated((124.0, sm_y), halo_band_angle(124.0, -55.0), |p| {
-            draw_straight_mode(
-                p,
-                aero,
-                rect(43.0, sm_y - 13.0, 162.0, 26.0),
-                if sm_active {
-                    INK
-                } else if aero.is_some() {
-                    WHITE
-                } else {
-                    MUTED
-                },
-            );
-        });
-        p.geometry(&self.aero_band, INK, 0.9);
-        p.stroke_geometry(&self.aero_band, EDGE, 0.8, 0.9);
-        let (mode, rgb) = aero_state(aero, settings);
-        for (x, width, label, font) in [
-            (78.0, 74.0, "AERO", HudNumber),
-            (175.0, 77.0, mode, HudLabel),
-        ] {
-            let y = halo_band_edge(x, -25.0);
-            p.rotated((x, y), halo_band_angle(x, -25.0), |p| {
-                p.text(
-                    label,
-                    rect(x - width / 2.0, y - 13.0, width, 26.0),
-                    font,
-                    rgb,
-                );
-            });
-        }
-        p.geometry(&self.gear_band, INK, 0.9);
+        draw_straight_mode(
+            p,
+            aero,
+            &self.straight_text,
+            if sm_active {
+                settings.colours.throttle
+            } else if aero.is_some() {
+                WHITE
+            } else {
+                MUTED
+            },
+        );
+        p.geometry(&self.delta_band, INK, settings.halo.opacity);
+        p.stroke_geometry(&self.delta_band, EDGE, 0.8, 0.9);
+        draw_lap_delta(p, delta, &self.delta_text, settings);
+        draw_fuel(p, status, &self.fuel_text, 1.0);
+        p.geometry(&self.gear_band, INK, settings.halo.opacity);
         p.stroke_geometry(&self.gear_band, EDGE, 0.9, 0.85);
         let heading_y = halo_band_edge(690.0, -61.0);
         p.rotated((690.0, heading_y), halo_band_angle(690.0, -61.0), |p| {
@@ -672,6 +682,18 @@ mod tests {
         );
         assert_eq!(rpm_fraction(Some(tel), None), None);
         assert_eq!(rpm_fraction(None, Some(status)), None);
+    }
+
+    #[test]
+    fn completed_lap_delta_uses_green_for_improvements_and_red_for_slower_laps() {
+        let settings = Settings::default();
+        assert_eq!(
+            lap_delta_colour(Some(-120), &settings),
+            settings.colours.optimal
+        );
+        assert_eq!(lap_delta_colour(Some(230), &settings), settings.colours.hot);
+        assert_eq!(lap_delta_colour(Some(0), &settings), WHITE);
+        assert_eq!(lap_delta_colour(None, &settings), MUTED);
     }
 
     fn driving_snapshot(now: Instant) -> Snapshot {

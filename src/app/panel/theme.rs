@@ -51,7 +51,7 @@ impl Page {
 
     fn description(self) -> &'static str {
         match self {
-            Self::Layout => "Position your HUDs and keep a setup for every car.",
+            Self::Layout => "Background 0–100%: fade the panels while text stays sharp.",
             Self::Tyres => "Set the temperature window and wear alerts.",
             Self::Colours => "Give every telemetry channel its own colour.",
             Self::Connection => "Connect to the UDP telemetry sent by F1 25.",
@@ -75,10 +75,12 @@ pub struct Theme {
     pub inputs: Vec<PositionedControl>,
     fonts: [HFONT; 5],
     brushes: [HBRUSH; 3],
+    // Panel owns the icon across DPI-driven theme rebuilds.
+    logo: HICON,
 }
 
 impl Theme {
-    pub fn new(dpi: u32) -> Self {
+    pub fn new(dpi: u32, logo: HICON) -> Self {
         let fonts = [(14, 400), (12, 400), (20, 500), (29, 400), (22, 600)].map(
             |(height, weight)| unsafe {
                 CreateFontW(
@@ -109,6 +111,7 @@ impl Theme {
             inputs: Vec::new(),
             fonts,
             brushes: [SIDE, CARD, INPUT].map(|colour| unsafe { CreateSolidBrush(rgb(colour)) }),
+            logo,
         }
     }
 
@@ -473,13 +476,17 @@ impl Theme {
             p.line(216, 0, 216, HEIGHT, LINE);
             p.line(892, 86, 892, HEIGHT, 0x30476c);
 
-            p.round((22, 23, 38, 38), CYAN, CYAN, 9);
-            p.text(
-                "H",
-                (22, 23, 38, 38),
-                4,
-                INPUT,
-                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            let logo = p.rect((10, 12, 60, 60));
+            let _ = DrawIconEx(
+                dc,
+                logo.left,
+                logo.top,
+                self.logo,
+                logo.right - logo.left,
+                logo.bottom - logo.top,
+                0,
+                None,
+                DI_NORMAL,
             );
             p.text("HALO", (72, 21, 124, 30), 4, TEXT, DT_SINGLELINE);
             p.text("TELEMETRY", (73, 50, 122, 17), 1, MUTED, DT_SINGLELINE);
@@ -630,7 +637,7 @@ impl Theme {
                 Page::Shortcuts => {
                     p.card((244, 196, 620, 166), "Edit / Race Mode");
                     p.card((244, 382, 620, 166), "HUD visibility");
-                    p.text("Edit: drag to move · resize at the corners\nWheel: scale · Shift + wheel: opacity · Esc: Race Mode", (264, 572, 580, 54), 0, MUTED, DT_WORDBREAK);
+                    p.text("Edit: drag to move · resize at the corners\nWheel: scale · Shift + wheel: background · Esc: Race Mode", (264, 572, 580, 54), 0, MUTED, DT_WORDBREAK);
                 }
                 Page::Diagnostics => {
                     p.card((244, 196, 620, 138), "Automatic ERS capacity");

@@ -2,7 +2,9 @@ pub mod demo;
 pub mod protocol;
 pub mod state;
 
-pub use protocol::{Aero, CarStatus, CarTelemetry, Damage, Header, Packet, ParseError, parse};
+pub use protocol::{
+    Aero, CarStatus, CarTelemetry, Damage, Header, LapHistory, Packet, ParseError, parse,
+};
 pub use state::{Connection, Snapshot, TelemetryState, Timed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

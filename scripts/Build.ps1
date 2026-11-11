@@ -32,8 +32,10 @@ try {
     }
     $toolsDirectory = Join-Path $cacheDirectory 'build-tools'
     $dlltool = Join-Path $toolsDirectory 'dlltool.exe'
-    if (-not (Test-Path -LiteralPath $dlltool)) {
-        if (-not $Bootstrap) { throw 'dlltool assente. Rieseguire con -Bootstrap per scaricare LLVM-MinGW verificato.' }
+    $resourceCompiler = Join-Path $toolsDirectory 'llvm-rc.exe'
+    $resourceConverter = Join-Path $toolsDirectory 'llvm-cvtres.exe'
+    if (-not ((Test-Path -LiteralPath $dlltool) -and (Test-Path -LiteralPath $resourceCompiler) -and (Test-Path -LiteralPath $resourceConverter))) {
+        if (-not $Bootstrap) { throw 'Strumenti LLVM assenti. Rieseguire con -Bootstrap per scaricare LLVM-MinGW verificato.' }
         $archivePath = Join-Path $cacheDirectory 'llvm-mingw.zip'
         $archiveUri = 'https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-x86_64.zip'
         $expectedHash = '552191B5754C49A5A20723276A6FC56541EA1922C4C50B7B669022333FC1B40F'
@@ -46,7 +48,7 @@ try {
         $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
         try {
             foreach ($entry in $archive.Entries) {
-                if ($entry.FullName -match '^llvm-mingw-[^/]+/bin/(llvm-dlltool\.exe|[^/]+\.dll)$') {
+                if ($entry.FullName -match '^llvm-mingw-[^/]+/bin/(llvm-(dlltool|rc|cvtres)\.exe|[^/]+\.dll)$') {
                     [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $toolsDirectory $entry.Name), $true)
                 }
             }

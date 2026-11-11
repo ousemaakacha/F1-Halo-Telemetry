@@ -49,7 +49,7 @@ pub fn draw(
         rect(4.0, 4.0, WIDTH - 8.0, HEIGHT - 28.0),
         12.0,
         BACKGROUND,
-        0.94,
+        settings.tyres.opacity,
     );
     p.text("TYRES", rect(20.0, 10.0, 150.0, 32.0), TyreTitle, WHITE);
     let summary = rect(208.0, 10.0, COLUMN_WIDTH, 32.0);

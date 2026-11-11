@@ -45,6 +45,55 @@ pub fn rect(x: f32, y: f32, w: f32, h: f32) -> D2D_RECT_F {
     }
 }
 
+pub struct TextCurve {
+    samples: Vec<(f32, Vector2)>,
+}
+
+impl TextCurve {
+    pub fn new(points: impl IntoIterator<Item = (f32, f32)>) -> Self {
+        let mut samples = Vec::new();
+        let mut distance = 0.0;
+        let mut previous: Option<Vector2> = None;
+        for (x, y) in points {
+            if let Some(previous) = previous {
+                distance += (x - previous.X).hypot(y - previous.Y);
+            }
+            let point = Vector2 { X: x, Y: y };
+            samples.push((distance, point));
+            previous = Some(point);
+        }
+        assert!(samples.len() >= 2 && distance > 0.0);
+        Self { samples }
+    }
+
+    fn length(&self) -> f32 {
+        self.samples.last().unwrap().0
+    }
+
+    pub fn centre(&self) -> (f32, f32) {
+        let (point, _) = self.position(self.length() / 2.0);
+        (point.X, point.Y)
+    }
+
+    fn position(&self, distance: f32) -> (Vector2, f32) {
+        let distance = distance.clamp(0.0, self.length());
+        let index = self
+            .samples
+            .partition_point(|sample| sample.0 < distance)
+            .clamp(1, self.samples.len() - 1);
+        let (start, a) = self.samples[index - 1];
+        let (end, b) = self.samples[index];
+        let fraction = (distance - start) / (end - start);
+        (
+            Vector2 {
+                X: a.X + (b.X - a.X) * fraction,
+                Y: a.Y + (b.Y - a.Y) * fraction,
+            },
+            (b.Y - a.Y).atan2(b.X - a.X).to_degrees(),
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Font {
     Caption,
@@ -55,6 +104,7 @@ pub enum Font {
     Gear,
     HudLabel,
     HudNumber,
+    HudStraight,
     HudSpeed,
     HudSecondary,
     HudFuel,
@@ -63,7 +113,7 @@ pub enum Font {
     TyreWear,
 }
 
-const FONT_COUNT: usize = 14;
+const FONT_COUNT: usize = 15;
 
 impl Font {
     fn index(self) -> usize {
@@ -79,6 +129,7 @@ pub struct Graphics {
     pub geometry_factory: ID2D1Factory1,
     composition: IDCompositionDevice,
     formats: [IDWriteTextFormat; FONT_COUNT],
+    advances: [[f32; 95]; FONT_COUNT],
     gpu: Option<GpuTimer>,
     pub adapter_name: String,
 }
@@ -149,6 +200,7 @@ impl Graphics {
                 gear_format,
                 hud(10.0)?,
                 hud(22.0)?,
+                hud(19.0)?,
                 hud(36.0)?,
                 hud(27.0)?,
                 hud(17.0)?,
@@ -156,6 +208,21 @@ impl Graphics {
                 centered(14.0, DWRITE_FONT_WEIGHT_MEDIUM, false)?,
                 centered(31.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?,
             ];
+            // Cache advances once instead of measuring curved glyphs every frame.
+            let ascii: [u16; 95] = std::array::from_fn(|i| i as u16 + 32);
+            let mut advances = [[0.0; 95]; FONT_COUNT];
+            for (format, widths) in formats.iter().zip(&mut advances) {
+                let layout = write.CreateTextLayout(&ascii, format, 10000.0, 200.0)?;
+                let mut clusters = [DWRITE_CLUSTER_METRICS::default(); 95];
+                let mut count = 0;
+                layout.GetClusterMetrics(Some(&mut clusters), &mut count)?;
+                let mut start = 0;
+                for cluster in &clusters[..count as usize] {
+                    let end = start + cluster.length as usize;
+                    widths[start..end].fill(cluster.width / cluster.length as f32);
+                    start = end;
+                }
+            }
             let gpu = GpuTimer::new(&device).ok();
             Ok(Self {
                 device,
@@ -165,6 +232,7 @@ impl Graphics {
                 geometry_factory,
                 composition,
                 formats,
+                advances,
                 gpu,
                 adapter_name,
             })
@@ -205,8 +273,6 @@ impl Graphics {
             context.SetTarget(&bitmap);
             let target = self.composition.CreateTargetForHwnd(hwnd, true)?;
             let visual = self.composition.CreateVisual()?;
-            let opacity_effect = self.composition.CreateEffectGroup()?;
-            visual.SetEffect(&opacity_effect)?;
             visual.SetContent(&chain)?;
             target.SetRoot(&visual)?;
             self.composition.Commit()?;
@@ -218,14 +284,12 @@ impl Graphics {
                 bitmap: Some(bitmap),
                 _target: target,
                 _visual: visual,
-                opacity_effect,
-                composition: self.composition.clone(),
                 brush,
                 material,
                 formats: self.formats.clone(),
+                advances: self.advances,
                 width,
                 height,
-                opacity: -1.0,
             })
         }
     }
@@ -320,14 +384,12 @@ pub struct Surface {
     bitmap: Option<ID2D1Bitmap1>,
     _target: IDCompositionTarget,
     _visual: IDCompositionVisual,
-    opacity_effect: IDCompositionEffectGroup,
-    composition: IDCompositionDevice,
     brush: ID2D1SolidColorBrush,
     material: ID2D1LinearGradientBrush,
     formats: [IDWriteTextFormat; FONT_COUNT],
+    advances: [[f32; 95]; FONT_COUNT],
     pub width: u32,
     pub height: u32,
-    opacity: f32,
 }
 
 impl Surface {
@@ -355,19 +417,9 @@ impl Surface {
         Ok(())
     }
 
-    pub fn begin(
-        &mut self,
-        base_width: f32,
-        base_height: f32,
-        opacity: f32,
-    ) -> Result<Painter<'_>> {
+    pub fn begin(&mut self, base_width: f32, base_height: f32) -> Result<Painter<'_>> {
         // SAFETY: this context is never accessed from the telemetry thread.
         unsafe {
-            if (opacity - self.opacity).abs() > 0.0001 {
-                self.opacity_effect.SetOpacity2(opacity)?;
-                self.composition.Commit()?;
-                self.opacity = opacity;
-            }
             self.context.BeginDraw();
             self.context.Clear(Some(&D2D1_COLOR_F::default()));
             let sx = self.width as f32 / base_width;
@@ -383,6 +435,7 @@ impl Surface {
             brush: &self.brush,
             material: &self.material,
             formats: &self.formats,
+            advances: &self.advances,
         })
     }
 
@@ -402,6 +455,7 @@ pub struct Painter<'a> {
     brush: &'a ID2D1SolidColorBrush,
     material: &'a ID2D1LinearGradientBrush,
     formats: &'a [IDWriteTextFormat; FONT_COUNT],
+    advances: &'a [[f32; 95]; FONT_COUNT],
 }
 
 impl Painter<'_> {
@@ -418,8 +472,9 @@ impl Painter<'_> {
         }
     }
 
-    pub fn material_geometry(&self, geometry: &ID2D1PathGeometry) {
+    pub fn material_geometry(&self, geometry: &ID2D1PathGeometry, opacity: f32) {
         unsafe {
+            self.material.SetOpacity(opacity);
             self.context.FillGeometry(geometry, self.material, None);
         }
     }
@@ -573,6 +628,58 @@ impl Painter<'_> {
         let _ = text.write_fmt(value);
         self.text(text.as_str(), r, font, rgb);
     }
+    pub fn curved_text(&self, value: &str, curve: &TextCurve, font: Font, rgb: [u8; 3]) {
+        let advance = |character: char| {
+            let index = (character as usize)
+                .checked_sub(32)
+                .filter(|&index| index < 95)
+                .unwrap_or((b'?' - 32) as usize);
+            self.advances[font.index()][index]
+        };
+        let width: f32 = value.chars().map(advance).sum();
+        if width <= 0.0 {
+            return;
+        }
+        let scale = (curve.length() / width).min(1.0);
+        let height = unsafe { self.formats[font.index()].GetFontSize() } * 1.5;
+        let mut distance = (curve.length() - width * scale) / 2.0;
+        for character in value.chars() {
+            let width = advance(character);
+            let (point, angle) = curve.position(distance + width * scale / 2.0);
+            let centre = (point.X, point.Y);
+            self.rotated(centre, angle, |p| {
+                p.scaled(centre, scale, |p| {
+                    let mut buffer = [0; 4];
+                    p.text(
+                        character.encode_utf8(&mut buffer),
+                        rect(
+                            point.X - width / 2.0 - 2.0,
+                            point.Y - height / 2.0,
+                            width + 4.0,
+                            height,
+                        ),
+                        font,
+                        rgb,
+                    );
+                });
+            });
+            distance += width * scale;
+        }
+    }
+    pub fn curved_textf(
+        &self,
+        value: fmt::Arguments<'_>,
+        curve: &TextCurve,
+        font: Font,
+        rgb: [u8; 3],
+    ) {
+        let mut text = TextBuffer {
+            bytes: [0; 192],
+            len: 0,
+        };
+        let _ = text.write_fmt(value);
+        self.curved_text(text.as_str(), curve, font, rgb);
+    }
     pub fn geometry(&self, geometry: &ID2D1PathGeometry, rgb: [u8; 3], opacity: f32) {
         self.brush(rgb, opacity);
         unsafe {
@@ -700,5 +807,25 @@ fn query_ready<T>(context: &ID3D11DeviceContext, query: &ID3D11Query, value: &mu
             size_of::<T>() as u32,
             D3D11_ASYNC_GETDATA_DONOTFLUSH.0 as u32,
         ) == S_OK
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TextCurve;
+
+    #[test]
+    fn curved_text_positions_follow_the_path_with_local_tangents() {
+        let curve = TextCurve::new((0..=100).map(|i| {
+            let x = -40.0 + 0.8 * i as f32;
+            (x, x * x / 100.0)
+        }));
+        let (start, left_angle) = curve.position(-1.0);
+        let (middle, middle_angle) = curve.position(curve.length() / 2.0);
+        let (end, right_angle) = curve.position(curve.length() + 1.0);
+        assert_eq!((start.X, start.Y), (-40.0, 16.0));
+        assert_eq!((end.X, end.Y), (40.0, 16.0));
+        assert!(middle.X.abs() < 0.001 && middle.Y.abs() < 0.001);
+        assert!(left_angle < -35.0 && right_angle > 35.0 && middle_angle.abs() < 0.5);
     }
 }

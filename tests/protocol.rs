@@ -13,6 +13,7 @@ fn wire(id: u8, player: u8, frame: u32) -> Vec<u8> {
         6 => 1448,
         7 => 1445,
         10 => 1133,
+        11 => 1460,
         16 => 269,
         _ => 29,
     };
@@ -28,6 +29,140 @@ fn wire(id: u8, player: u8, frame: u32) -> Vec<u8> {
     b[27] = player;
     b[28] = 255;
     b
+}
+
+fn history_wire(player: u8, frame: u32, laps: &[(u32, u8)]) -> Vec<u8> {
+    assert!(laps.len() <= 100);
+    let mut bytes = wire(11, player, frame);
+    bytes[29] = player;
+    bytes[30] = laps.len() as u8;
+    for (index, &(time, valid)) in laps.iter().enumerate() {
+        let offset = 36 + index * 14;
+        bytes[offset..offset + 4].copy_from_slice(&time.to_le_bytes());
+        bytes[offset + 13] = valid;
+    }
+    bytes
+}
+
+#[test]
+fn history_compares_last_completed_lap_with_previous_valid_personal_best() {
+    for player in [0, 23] {
+        for (last, delta) in [(90_230, 230), (89_880, -120), (90_000, 0)] {
+            let bytes = history_wire(player, 600, &[(90_000, 15), (last, 15), (1_000, 15)]);
+            let Packet::History(header, history) = parse(&bytes).unwrap() else {
+                panic!()
+            };
+            assert_eq!(header.player, player);
+            assert_eq!(history.completed_laps, 2);
+            assert_eq!(history.last_lap_ms, Some(last));
+            assert_eq!(history.best_before_last_ms, Some(90_000));
+            assert_eq!(history.delta_ms(), Some(delta));
+        }
+        for laps in [
+            vec![],
+            vec![(10_000, 15)],
+            vec![(90_000, 15), (10_000, 15)],
+            vec![(90_000, 15), (89_880, 14), (10_000, 15)],
+            vec![(90_000, 15), (0, 15), (10_000, 15)],
+        ] {
+            let Packet::History(_, history) = parse(&history_wire(player, 600, &laps)).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(history.delta_ms(), None);
+        }
+        let bytes = history_wire(
+            player,
+            600,
+            &[(80_000, 14), (90_000, 15), (90_230, 15), (1_000, 15)],
+        );
+        let Packet::History(_, history) = parse(&bytes).unwrap() else {
+            panic!()
+        };
+        assert_eq!(history.delta_ms(), Some(230));
+    }
+    let mut laps = [(0, 0); 100];
+    laps[0] = (90_000, 15);
+    laps[98] = (90_230, 15);
+    laps[99] = (1_000, 15);
+    let Packet::History(_, history) = parse(&history_wire(23, 600, &laps)).unwrap() else {
+        panic!()
+    };
+    assert_eq!(history.completed_laps, 99);
+    assert_eq!(history.delta_ms(), Some(230));
+}
+
+#[test]
+fn history_ignores_other_cars_and_rejects_invalid_counts_and_flags() {
+    let bytes = history_wire(23, 600, &[(90_000, 15), (90_230, 15), (0, 0)]);
+    let mut other = bytes.clone();
+    other[29] = 22;
+    assert!(matches!(parse(&other), Ok(Packet::Ignored(_))));
+    for (offset, invalid) in [
+        (29, 24),
+        (30, 101),
+        (31, 9),
+        (32, 4),
+        (35, 4),
+        (49, 16),
+        (77, 16),
+    ] {
+        let mut malformed = bytes.clone();
+        malformed[offset] = invalid;
+        assert!(
+            parse(&malformed).is_err(),
+            "Accepted history byte {offset}={invalid}"
+        );
+    }
+}
+
+#[test]
+fn lap_delta_waits_for_the_new_completed_lap_and_clears_when_unavailable() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(6, 23, 100)).unwrap(), now);
+    state.apply(
+        parse(&history_wire(
+            23,
+            100,
+            &[(90_000, 15), (90_230, 15), (1_000, 15)],
+        ))
+        .unwrap(),
+        now,
+    );
+    assert_eq!(state.snapshot.lap_delta_ms(now), Some(230));
+    let mut lap = wire(2, 23, 101);
+    let offset = 29 + 57 * 23;
+    lap[offset + 45] = 2;
+    lap[offset + 33] = 3;
+    state.apply(parse(&lap).unwrap(), now);
+    assert_eq!(state.snapshot.lap_delta_ms(now), Some(230));
+    lap[19..23].copy_from_slice(&102u32.to_le_bytes());
+    lap[23..27].copy_from_slice(&102u32.to_le_bytes());
+    lap[offset + 33] = 4;
+    state.apply(parse(&lap).unwrap(), now);
+    assert_eq!(state.snapshot.lap_delta_ms(now), None);
+    state.apply(
+        parse(&history_wire(
+            23,
+            103,
+            &[(90_000, 15), (90_230, 15), (89_880, 15), (1_000, 15)],
+        ))
+        .unwrap(),
+        now,
+    );
+    assert_eq!(state.snapshot.lap_delta_ms(now), Some(-120));
+    state.apply(parse(&wire(6, 23, 104)).unwrap(), now + HISTORY_TTL);
+    assert_eq!(state.snapshot.lap_delta_ms(now + HISTORY_TTL), Some(-120));
+    let expired = now + HISTORY_TTL + Duration::from_millis(1);
+    assert_eq!(state.snapshot.lap_delta_ms(expired), None);
+    assert_eq!(state.snapshot.freshness_mask(expired) & (1 << 8), 0);
+    let mut new_session = wire(6, 23, 1);
+    new_session[7..15].copy_from_slice(&43u64.to_le_bytes());
+    state.apply(parse(&new_session).unwrap(), expired);
+    assert!(state.snapshot.lap_history.is_none());
+    assert!(state.snapshot.current_lap.is_none());
+    assert_eq!(state.snapshot.lap_delta_ms(expired), None);
 }
 
 #[test]
@@ -159,7 +294,7 @@ fn conversions_and_ers_require_known_capacity() {
 
 #[test]
 fn rejects_every_truncation_and_trailing_bytes() {
-    for id in [1, 2, 3, 4, 6, 7, 10, 16] {
+    for id in [1, 2, 3, 4, 6, 7, 10, 11, 16] {
         let b = wire(id, 0, 1);
         for n in 0..b.len() {
             assert!(parse(&b[..n]).is_err(), "id={id}, n={n}");
@@ -224,7 +359,7 @@ fn arbitrary_datagrams_never_panic() {
 
 #[test]
 fn demo_packets_round_trip_without_changing_data() {
-    let mut bytes = [0u8; 1448];
+    let mut bytes = [0u8; 1460];
     for seconds in [0.0, 4.0, 8.0, 9.99, 10.0, 12.0, 16.0, 18.0, 1028.0] {
         for packet in demo::sample(seconds, 720) {
             let n = demo::encode(packet, &mut bytes);
@@ -270,12 +405,17 @@ fn session_change_clears_other_packet_families_and_rejects_retired_uid() {
 fn flashback_clears_slow_data_and_rejects_late_old_timeline() {
     let now = Instant::now();
     let mut state = TelemetryState::default();
+    state.apply(
+        parse(&history_wire(0, 500, &[(90_000, 15), (90_230, 15), (0, 0)])).unwrap(),
+        now,
+    );
     state.apply(parse(&wire(10, 0, 500)).unwrap(), now);
     state.apply(parse(&wire(6, 0, 600)).unwrap(), now);
     let mut rollback = wire(6, 0, 300);
     rollback[23..27].copy_from_slice(&601u32.to_le_bytes());
     assert!(state.apply(parse(&rollback).unwrap(), now));
     assert!(state.snapshot.damage.is_none());
+    assert!(state.snapshot.lap_history.is_none());
     assert!(!state.apply(parse(&wire(10, 0, 599)).unwrap(), now));
     assert_eq!(state.snapshot.counters.flashbacks, 1);
 }
