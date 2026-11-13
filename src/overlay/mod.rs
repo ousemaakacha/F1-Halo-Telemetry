@@ -31,7 +31,7 @@ pub enum Action {
     PanelDpi(u32, RECT),
     PanelScroll(bool, u16, u16),
     PanelWheel(i16),
-    ControllerAxes(usize, [f32; 2]),
+    ControllerInput(usize, crate::input::rear_view::ControllerState),
     ControllerRemoved(usize),
     Quit,
 }

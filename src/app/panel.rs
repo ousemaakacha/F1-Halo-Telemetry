@@ -448,7 +448,7 @@ impl Panel {
         )?;
         self.edit(HOTKEY, 264, 291, 580)?;
         self.label(
-            "Show or hide both HUDs without changing their layout.",
+            "Show or hide both HUDs. Controller: double-press View / Share / Create.",
             264,
             437,
             580,
@@ -989,9 +989,9 @@ unsafe extern "system" fn panel_proc(
     }
     match message {
         WM_INPUT => {
-            if let Some((device, axes)) = rear_view::read_raw(HRAWINPUT(lparam.0 as *mut _)) {
-                overlay::push(Action::ControllerAxes(device, axes));
-            }
+            rear_view::read_raw(HRAWINPUT(lparam.0 as *mut _), |device, state| {
+                overlay::push(Action::ControllerInput(device, state));
+            });
         }
         WM_INPUT_DEVICE_CHANGE => {
             let device = lparam.0 as usize;

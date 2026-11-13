@@ -10,6 +10,14 @@ pub const STATUS_SIZE: usize = 1445;
 pub const DAMAGE_SIZE: usize = 1133;
 pub const AERO_SIZE: usize = 269;
 pub const HISTORY_SIZE: usize = 1460;
+pub const LAP_SIZE: usize = 1399;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LapData {
+    pub result_status: u8,
+    pub current_lap: u8,
+    pub gap_behind_ms: Option<u32>,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LapHistory {
@@ -83,7 +91,7 @@ pub enum Packet {
     Damage(Header, Damage),
     Aero(Header, Aero),
     Session(Header, bool, u8),
-    Lap(Header, u8, u8),
+    Lap(Header, LapData),
     History(Header, LapHistory),
     Participants(Header, u8),
     Event(Header, [u8; 4]),
@@ -98,7 +106,7 @@ impl Packet {
             | Self::Damage(h, _)
             | Self::Aero(h, _)
             | Self::Session(h, _, _)
-            | Self::Lap(h, _, _)
+            | Self::Lap(h, _)
             | Self::History(h, _)
             | Self::Participants(h, _)
             | Self::Event(h, _)
@@ -177,7 +185,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
     let id = b[6];
     let expected = match id {
         1 => 926,
-        2 => 1399,
+        2 => LAP_SIZE,
         3 => 45,
         4 => 1470,
         6 => TELEMETRY_SIZE,
@@ -300,11 +308,38 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
             b[HEADER_SIZE + 8],
         ),
         2 => {
-            let result = b[HEADER_SIZE + 57 * index + 45];
+            let cars = &b[HEADER_SIZE..HEADER_SIZE + 57 * CAR_COUNT];
+            let car = &cars[57 * index..][..57];
+            let result = car[45];
             if result > 7 {
                 return Err(ParseError::InvalidValue("resultStatus"));
             }
-            Packet::Lap(h, result, b[HEADER_SIZE + 57 * index + 33])
+            let position = car[32];
+            if position as usize > CAR_COUNT {
+                return Err(ParseError::InvalidValue("carPosition"));
+            }
+            let mut gap_behind_ms = None;
+            if result == 2 && (1..CAR_COUNT as u8).contains(&position) {
+                // The following car's interval to its race predecessor is our rear gap.
+                if let Some(behind) = cars
+                    .chunks_exact(57)
+                    .find(|other| other[32] == position + 1 && other[45] == 2)
+                {
+                    let millis = u16_at(behind, 14);
+                    if millis >= 60_000 {
+                        return Err(ParseError::InvalidValue("deltaToCarInFrontMSPart"));
+                    }
+                    gap_behind_ms = Some(u32::from(behind[16]) * 60_000 + u32::from(millis));
+                }
+            }
+            Packet::Lap(
+                h,
+                LapData {
+                    result_status: result,
+                    current_lap: car[33],
+                    gap_behind_ms,
+                },
+            )
         }
         11 => {
             let car = b[29];

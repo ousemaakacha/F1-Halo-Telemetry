@@ -44,6 +44,123 @@ fn history_wire(player: u8, frame: u32, laps: &[(u32, u8)]) -> Vec<u8> {
     bytes
 }
 
+fn lap_wire(player: u8, frame: u32, position: u8, behind: Option<(u8, u32)>) -> Vec<u8> {
+    let mut bytes = wire(2, player, frame);
+    let offset = 29 + 57 * player as usize;
+    bytes[offset + 32] = position;
+    bytes[offset + 33] = 3;
+    bytes[offset + 45] = 2;
+    bytes[offset + 14..offset + 16].copy_from_slice(&999u16.to_le_bytes());
+    if let Some((index, gap)) = behind {
+        assert_ne!(index, player);
+        let offset = 29 + 57 * index as usize;
+        bytes[offset + 32] = position + 1;
+        bytes[offset + 45] = 2;
+        bytes[offset + 14..offset + 16].copy_from_slice(&((gap % 60_000) as u16).to_le_bytes());
+        bytes[offset + 16] = (gap / 60_000) as u8;
+    }
+    bytes
+}
+
+#[test]
+fn rear_gap_reads_the_following_race_position_not_array_order_or_our_front_gap() {
+    for (player, behind) in [(0, 23), (23, 0), (10, 4)] {
+        for gap in [0, 1_234, 61_567, 15_359_999] {
+            let mut bytes = lap_wire(player, 600, 6, Some((behind, gap)));
+            bytes[29 + 57 * player as usize + 37] = 1;
+            let Packet::Lap(header, lap) = parse(&bytes).unwrap() else {
+                panic!()
+            };
+            assert_eq!(header.player, player);
+            assert_eq!(lap.result_status, 2);
+            assert_eq!(lap.current_lap, 3);
+            assert_eq!(lap.gap_behind_ms, Some(gap));
+        }
+    }
+}
+
+#[test]
+fn rear_gap_is_unavailable_without_an_active_following_car_and_valid_position() {
+    let base = lap_wire(23, 600, 6, Some((4, 1_234)));
+    let gap = |bytes: &[u8]| {
+        let Packet::Lap(_, lap) = parse(bytes).unwrap() else {
+            panic!()
+        };
+        lap.gap_behind_ms
+    };
+    for result in [0, 1, 3, 4, 5, 6, 7] {
+        let mut bytes = base.clone();
+        bytes[29 + 57 * 4 + 45] = result;
+        assert_eq!(gap(&bytes), None);
+        let mut bytes = base.clone();
+        bytes[29 + 57 * 23 + 45] = result;
+        assert_eq!(gap(&bytes), None);
+    }
+    for position in [0, 24] {
+        let mut bytes = base.clone();
+        bytes[29 + 57 * 23 + 32] = position;
+        assert_eq!(gap(&bytes), None);
+    }
+    let mut bytes = base.clone();
+    bytes[29 + 57 * 4 + 32] = 8;
+    assert_eq!(gap(&bytes), None);
+    assert_eq!(gap(&lap_wire(23, 600, 6, None)), None);
+    let mut bytes = base.clone();
+    bytes[29 + 57 * 23 + 32] = 25;
+    assert_eq!(parse(&bytes), Err(ParseError::InvalidValue("carPosition")));
+    for invalid in [60_000u16, u16::MAX] {
+        let mut bytes = base.clone();
+        let offset = 29 + 57 * 4 + 14;
+        bytes[offset..offset + 2].copy_from_slice(&invalid.to_le_bytes());
+        assert_eq!(
+            parse(&bytes),
+            Err(ParseError::InvalidValue("deltaToCarInFrontMSPart"))
+        );
+    }
+}
+
+#[test]
+fn rear_gap_updates_live_and_clears_on_expiry_missing_car_pause_or_timeline_reset() {
+    let now = Instant::now();
+    let mut state = TelemetryState::default();
+    state.apply(parse(&wire(6, 23, 100)).unwrap(), now);
+    state.apply(parse(&lap_wire(23, 100, 6, Some((4, 1_800)))).unwrap(), now);
+    assert_eq!(state.snapshot.gap_behind_ms(now), Some(1_800));
+    state.apply(parse(&lap_wire(23, 101, 6, Some((4, 900)))).unwrap(), now);
+    assert_eq!(state.snapshot.gap_behind_ms(now), Some(900));
+    assert!(!state.apply(parse(&lap_wire(23, 100, 6, Some((4, 1_800)))).unwrap(), now));
+    assert_eq!(state.snapshot.gap_behind_ms(now), Some(900));
+    state.apply(parse(&wire(6, 23, 102)).unwrap(), now + FAST_TTL);
+    assert_eq!(state.snapshot.gap_behind_ms(now + FAST_TTL), Some(900));
+    let expired = now + FAST_TTL + Duration::from_millis(1);
+    assert_eq!(state.snapshot.gap_behind_ms(expired), None);
+    assert_eq!(state.snapshot.freshness_mask(expired) & (1 << 9), 0);
+    state.apply(parse(&lap_wire(23, 102, 6, None)).unwrap(), expired);
+    assert!(state.snapshot.gap_behind.is_none());
+    state.apply(
+        parse(&lap_wire(23, 103, 6, Some((0, 2_100)))).unwrap(),
+        expired,
+    );
+    assert_eq!(state.snapshot.gap_behind_ms(expired), Some(2_100));
+    let mut paused = wire(1, 23, 103);
+    paused[29 + 14] = 1;
+    state.apply(parse(&paused).unwrap(), expired);
+    assert_eq!(state.snapshot.gap_behind_ms(expired), None);
+    let mut rollback = wire(6, 23, 50);
+    rollback[23..27].copy_from_slice(&104u32.to_le_bytes());
+    state.apply(parse(&rollback).unwrap(), expired);
+    assert!(state.snapshot.gap_behind.is_none());
+    state.apply(
+        parse(&lap_wire(23, 105, 6, Some((0, 700)))).unwrap(),
+        expired,
+    );
+    assert_eq!(state.snapshot.gap_behind_ms(expired), Some(700));
+    let mut new_session = wire(6, 23, 1);
+    new_session[7..15].copy_from_slice(&43u64.to_le_bytes());
+    state.apply(parse(&new_session).unwrap(), expired);
+    assert!(state.snapshot.gap_behind.is_none());
+}
+
 #[test]
 fn history_compares_last_completed_lap_with_previous_valid_personal_best() {
     for player in [0, 23] {

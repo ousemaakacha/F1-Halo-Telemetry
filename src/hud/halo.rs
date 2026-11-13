@@ -69,32 +69,16 @@ fn draw_straight_mode(p: &Painter<'_>, aero: Option<Aero>, curve: &TextCurve, rg
     }
 }
 
-fn lap_delta_colour(delta: Option<i64>, settings: &Settings) -> [u8; 3] {
-    match delta {
-        Some(value) if value < 0 => settings.colours.optimal,
-        Some(value) if value > 0 => settings.colours.hot,
-        Some(_) => WHITE,
-        None => MUTED,
-    }
-}
-
-fn draw_lap_delta(p: &Painter<'_>, delta: Option<i64>, curve: &TextCurve, settings: &Settings) {
-    let colour = lap_delta_colour(delta, settings);
-    if let Some(delta) = delta {
-        let millis = delta.unsigned_abs();
+fn draw_gap_behind(p: &Painter<'_>, gap: Option<u32>, curve: &TextCurve) {
+    if let Some(millis) = gap {
         p.curved_textf(
-            format_args!(
-                "{} {}.{:03}",
-                if delta < 0 { "-" } else { "+" },
-                millis / 1000,
-                millis % 1000
-            ),
+            format_args!("+ {}.{:03}", millis / 1000, millis % 1000),
             curve,
             HudNumber,
-            colour,
+            WHITE,
         );
     } else {
-        p.curved_text("--", curve, HudNumber, colour);
+        p.curved_text("--", curve, HudNumber, MUTED);
     }
 }
 
@@ -424,12 +408,12 @@ impl Halo {
 
         if is_classic {
             self.classic
-                .draw_wings(p, tel, status, aero, snapshot.lap_delta_ms(now), settings);
+                .draw_wings(p, tel, status, aero, snapshot.gap_behind_ms(now), settings);
         } else if is_modern {
             self.modern
-                .draw_wings(p, tel, status, aero, snapshot.lap_delta_ms(now), settings);
+                .draw_wings(p, tel, status, aero, snapshot.gap_behind_ms(now), settings);
         } else {
-            self.draw_wide_wings(p, tel, status, aero, snapshot.lap_delta_ms(now), settings);
+            self.draw_wide_wings(p, tel, status, aero, snapshot.gap_behind_ms(now), settings);
         }
 
         let connection = snapshot.connection(now);
@@ -452,7 +436,7 @@ impl Halo {
         tel: Option<CarTelemetry>,
         status: Option<CarStatus>,
         aero: Option<Aero>,
-        delta: Option<i64>,
+        delta: Option<u32>,
         settings: &Settings,
     ) {
         let accent = settings.colours.accent;
@@ -482,7 +466,7 @@ impl Halo {
         );
         p.geometry(&self.delta_band, INK, settings.halo.opacity);
         p.stroke_geometry(&self.delta_band, EDGE, 0.8, 0.9);
-        draw_lap_delta(p, delta, &self.delta_text, settings);
+        draw_gap_behind(p, delta, &self.delta_text);
         draw_fuel(p, status, &self.fuel_text, 1.0);
         p.geometry(&self.gear_band, INK, settings.halo.opacity);
         p.stroke_geometry(&self.gear_band, EDGE, 0.9, 0.85);
@@ -682,18 +666,6 @@ mod tests {
         );
         assert_eq!(rpm_fraction(Some(tel), None), None);
         assert_eq!(rpm_fraction(None, Some(status)), None);
-    }
-
-    #[test]
-    fn completed_lap_delta_uses_green_for_improvements_and_red_for_slower_laps() {
-        let settings = Settings::default();
-        assert_eq!(
-            lap_delta_colour(Some(-120), &settings),
-            settings.colours.optimal
-        );
-        assert_eq!(lap_delta_colour(Some(230), &settings), settings.colours.hot);
-        assert_eq!(lap_delta_colour(Some(0), &settings), WHITE);
-        assert_eq!(lap_delta_colour(None, &settings), MUTED);
     }
 
     fn driving_snapshot(now: Instant) -> Snapshot {

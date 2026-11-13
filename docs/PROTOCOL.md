@@ -51,7 +51,8 @@ Player 255 non indicizza gli array e viene ignorato. Indici 24–254 sono invali
 
 Per gli ID letti vengono verificate versione 1 e lunghezza esatta, compresi i
 campi finali non visualizzati. Le altre categorie non modificano lo snapshot.
-Gli array contengono 24 slot e il parser legge soltanto la vettura locale.
+Gli array contengono 24 slot. Il parser legge la vettura locale e, in Lap Data,
+posizione e intervallo della vettura subito dietro in classifica.
 
 Offset relativi all'inizio del record vettura:
 
@@ -61,7 +62,15 @@ Offset relativi all'inizio del record vettura:
 | Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvest limit f32=50; networkPaused u8=58 |
 | Car Damage | wear[4] f32=0,4,8,12 |
 | Car Telemetry 2 | aeroMode u8=0; aeroAvailable u8=1; aeroDistance u16=2; overtakeAvailable u8=4; overtakeActive u8=5; overtakeDistance u16=6; regulations2026 u8=8 |
-| Lap Data | currentLapNum u8=33; resultStatus u8=45 |
+| Lap Data | deltaToCarInFrontMSPart u16=14; deltaToCarInFrontMinutesPart u8=16; carPosition u8=32; currentLapNum u8=33; resultStatus u8=45 |
+
+Per il distacco posteriore si cerca nello stesso pacchetto la vettura attiva
+(`resultStatus == 2`) con `carPosition == posizioneLocale + 1`. L'intervallo è
+`minuti × 60000 + millisecondi`, in interi u32; la parte millisecondi deve essere
+inferiore a 60000. Non si usa il delta anteriore della vettura locale, né la
+posizione nell'array. Posizione locale assente o ultima, giocatore non attivo e
+assenza di un inseguitore attivo producono un valore assente. Il dato live scade
+dopo 500 ms e viene invalidato con gli altri campi al cambio timeline/sorgente.
 
 Session History usa offset assoluti: `carIdx` u8=29, `numLaps` u8=30,
 `numTyreStints` u8=31, numeri dei giri migliori u8=32–35. I record dei giri
@@ -69,8 +78,8 @@ iniziano a 36 e hanno stride 14: tempo u32 a offset 0 e validità u8 a offset 13
 Il bit 0 identifica un giro valido. `numLaps` comprende il giro parziale corrente,
 che viene escluso dal confronto. Si accettano soltanto la vettura locale,
 massimo 100 record e 8 stint; conteggi, indici migliori e flag riservati sono
-validati. Il delta è ultimo giro concluso meno miglior giro valido precedente.
-L'ultimo giro invalido o l'assenza di un riferimento non producono un delta.
+validati. Il confronto storico resta disponibile nel modello dati; gli HUD
+mostrano il distacco posteriore da Lap Data, indipendente dalla validità del giro.
 
 Session usa gamePaused a offset corpo 14 e formula a offset corpo 8.
 Il carburante usa direttamente `m_fuelRemainingLaps`, il valore del MFD:

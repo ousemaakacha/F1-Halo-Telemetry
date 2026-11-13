@@ -1,5 +1,37 @@
 # Local verification
 
+## Select doppio e distacco posteriore live — 13 novembre 2026
+
+Due pressioni entro 400 ms di View/Back Xbox oppure Share/Create PlayStation
+alternano entrambi gli HUD. Testati fronti di pressione, rilascio obbligatorio,
+limite 400/401 ms, pressione mantenuta, sequenze successive, riconnessione,
+cambio dispositivo/sorgente e batch HID con tutte le transizioni. I report
+DualSense semplici/USB/Bluetooth e DualShock 4 USB/Bluetooth distinguono
+Share/Create da Options, stick e touchpad; XInput usa soltanto Back/View.
+
+Il distacco legge l'intervallo anteriore della vettura nella posizione successiva
+di classifica dallo stesso Lap Data. Fixture indipendenti coprono slot locali
+0/23, indici avversari non contigui, minuti e millisecondi, zero, giro invalido,
+ultima posizione, inseguitore inattivo, dati malformati, riordino, pausa,
+scadenza a 500 ms, cambio avversario, sessione, sorgente e flashback. Il test
+UDP reale verifica contemporaneamente cronologia e distacco da 2536 ms.
+
+Passati **82 test** (45 unit, 5 game data, 29 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings`, build Release e build degli esempi.
+Tre esecuzioni native isolate di 5 secondi, con UDP sintetico e una
+ricreazione del device ciascuna, hanno prodotto zero errori di presentazione:
+
+- [Wide, intervallo aggiornato da 1234 a 2345 ms](../artifacts/select-gap-wide-smoke.json):
+  274 frame, telemetria LIVE e distacco finale 2345 ms.
+- [Classic, inseguitore diventato inattivo](../artifacts/select-gap-classic-smoke.json):
+  280 frame, telemetria LIVE e distacco finale assente.
+- [Modern, solo Lap Data interrotto](../artifacts/select-gap-modern-smoke.json):
+  201 frame, telemetria LIVE e distacco finale scaduto.
+
+Entrambe le finestre conservano visibilità, topmost, click-through e mancata
+attivazione. Configurazioni e porta sono separate dalle preferenze utente.
+Non sono stati verificati una sessione reale di F1 25 o gesti su controller fisici.
+
 ## Straight Mode più compatto — 11 novembre 2026
 
 SM OFF, SM ON, SM READY e countdown metri usano un carattere dedicato da

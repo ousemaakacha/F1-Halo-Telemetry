@@ -76,7 +76,7 @@ impl Modern {
         tel: Option<CarTelemetry>,
         status: Option<CarStatus>,
         aero: Option<Aero>,
-        delta: Option<i64>,
+        delta: Option<u32>,
         settings: &Settings,
     ) {
         let sm_active = aero.is_some_and(|a| a.regulations_2026 && a.straight);
@@ -92,7 +92,7 @@ impl Modern {
                 MUTED
             },
         );
-        draw_lap_delta(p, delta, &self.delta_text, settings);
+        draw_gap_behind(p, delta, &self.delta_text);
         draw_fuel(p, status, &self.fuel_text, 1.2);
         for i in 0..9 {
             let gear = if i == 0 && tel.is_some_and(|t| t.gear == -1) {

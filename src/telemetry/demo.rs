@@ -3,7 +3,7 @@ use super::protocol::*;
 
 pub const DEMO_ERS_CAPACITY: f32 = 4_000_000.0;
 
-pub fn sample(seconds: f32, frame: u32) -> [Packet; 5] {
+pub fn sample(seconds: f32, frame: u32) -> [Packet; 6] {
     let phase = (seconds * 0.33).sin();
     let zone_seconds = seconds.rem_euclid(18.0);
     let speed = (190.0 + phase * 125.0).max(0.0);
@@ -79,6 +79,14 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 5] {
                 best_before_last_ms: Some(90_000),
             },
         ),
+        Packet::Lap(
+            Header { packet_id: 2, ..h },
+            LapData {
+                result_status: 2,
+                current_lap: 3,
+                gap_behind_ms: Some((1_800.0 + phase * 1_200.0).round() as u32),
+            },
+        ),
     ]
 }
 
@@ -92,6 +100,7 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
         Packet::Damage(..) => DAMAGE_SIZE,
         Packet::Aero(..) => AERO_SIZE,
         Packet::History(..) => HISTORY_SIZE,
+        Packet::Lap(..) => LAP_SIZE,
         _ => return 0,
     };
     if buffer.len() < size {
@@ -111,6 +120,24 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
     b[23..27].copy_from_slice(&h.overall_frame.to_le_bytes());
     b[27] = h.player;
     b[28] = 255;
+    if let Packet::Lap(_, lap) = packet {
+        let offset = HEADER_SIZE + 57 * h.player as usize;
+        b[offset + 32] = 1;
+        b[offset + 33] = lap.current_lap;
+        b[offset + 45] = lap.result_status;
+        if let Some(gap) = lap.gap_behind_ms {
+            if gap / 60_000 > u8::MAX as u32 {
+                return 0;
+            }
+            // Synthetic lap packets place the player first and the next slot second.
+            let behind = HEADER_SIZE + 57 * ((h.player as usize + 1) % CAR_COUNT);
+            b[behind + 32] = 2;
+            b[behind + 45] = 2;
+            b[behind + 14..behind + 16].copy_from_slice(&((gap % 60_000) as u16).to_le_bytes());
+            b[behind + 16] = (gap / 60_000) as u8;
+        }
+        return size;
+    }
     if let Packet::History(_, history) = packet {
         if history.completed_laps > 99 {
             return 0;

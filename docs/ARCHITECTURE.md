@@ -27,11 +27,13 @@ di una struttura piccola; le misure locali sono nel documento di verifica.
 Session History viene filtrato con `carIdx == playerCarIndex`. Il parser scorre
 al massimo 100 record, esclude il giro parziale finale e conserva soltanto il
 tempo dell'ultimo giro valido completato e il miglior tempo valido precedente.
-Il delta usa millisecondi interi con segno, senza arrotondamenti floating point.
-Lap Data fornisce il numero del giro corrente: finché la cronologia non coincide
-con il nuovo giro concluso, il delta resta assente. Cronologia più vecchia di
-5 secondi, guida inattiva e assenza di un riferimento valido producono `--`.
-Reset, cambio sorgente/sessione e flashback svuotano anche questi campi.
+Il confronto storico rimane nel modello dati. Gli HUD usano invece il distacco
+live posteriore di Lap Data: cercano la posizione di classifica successiva in
+tutti i 24 slot e leggono da quella vettura l'intervallo rispetto a chi precede.
+Il distacco usa millisecondi interi, senza stime da distanza o velocità, e ha un
+timestamp separato con scadenza a 500 ms. Nessun inseguitore attivo e guida
+inattiva producono `--`. Reset, cambio sorgente/sessione e flashback svuotano
+anche questi campi. La diagnostica esporta `gap_behind_ms`.
 
 ## Rendering e composizione
 
@@ -99,12 +101,12 @@ un conflitto conserva entrambe le combinazioni precedenti. Il comando globale di
 visibilità applica un filtro ai layout senza sovrascrivere le preferenze salvate;
 quando il filtro nasconde gli HUD non vengono effettuati draw o Present.
 
-`input/rear_view` legge i due assi dello stick destro del DualSense tramite
-Raw Input HID (USB e i due formati Bluetooth), con fallback XInput per i pad
+`input/rear_view` legge stick destro e Share/Create di DualSense e DualShock 4
+tramite Raw Input HID USB/Bluetooth, con fallback XInput per Xbox e i pad
 virtuali Steam Input. Il pannello registra joystick/gamepad con INPUTSINK e
 DEVNOTIFY: l'input del gioco non viene consumato. I report vengono letti durante
 WM_INPUT, prima di DefWindowProc; vengono accettati soltanto vendor/prodotto Sony
-e formati di lunghezza nota. La coda UI conserva assi e identificatore dispositivo,
+e formati di lunghezza nota. La coda UI conserva assi, Select e identificatore dispositivo,
 senza riferimenti ai buffer Windows. La rimozione invalida subito il campione.
 
 La pressione verso il basso, a destra o a sinistra si attiva al 55% e si rilascia
@@ -113,9 +115,18 @@ valore assoluto orizzontale e il valore verso il basso: resta attivo nei passagg
 diagonali fra retro e lati. Un campione HID scade dopo 500 ms; input assente,
 telemetria scaduta, pausa, perdita del focus, Demo ed Edit ripristinano la
 visibilità. Il focus verifica soltanto nome e percorso del processo F1_25.exe.
-Durante la guida il timer ricontrolla al massimo ogni 16 ms, anche con il solo
-Halo nascosto, per rilevare il rilascio. La scansione degli slot XInput assenti
+Con controller presente il timer ricontrolla al massimo ogni 16 ms, anche con
+entrambi gli HUD nascosti, per rilevare rilasci e pressioni. La scansione degli slot XInput assenti
 avviene al massimo una volta al secondo.
+
+Due fronti di pressione Select entro 400 ms alternano la visibilità globale.
+Su XInput viene letto Back/View; su HID Sony Share/Create, distinto dal touchpad.
+Ogni report di un batch HID viene elaborato per conservare anche pressioni e
+rilasci rapidi. Una pressione mantenuta non si ripete. Disconnessione, sorgente
+o controller diverso azzerano la sequenza; il primo stato con tasto già premuto
+richiede prima un rilascio. La sorgente HID recente ha priorità su XInput, così
+Steam Input non genera un secondo toggle per lo stesso gesto. Il comando è
+globale, indipendente da guida, focus, Edit, Demo e filtro dello stick destro.
 
 La sospensione è un filtro temporaneo soltanto sul layout Halo. Draw, applicazione
 impostazioni e hotkey usano lo stesso filtro; i layout salvati e il mini HUD
@@ -128,7 +139,8 @@ con l'utente, quindi richiede la stessa assegnazione nel gioco.
 
 Riferimenti: [Raw Input](https://learn.microsoft.com/en-us/windows/win32/inputdev/raw-input),
 [XInputGetState](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate),
-[formati DualSense in SDL](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_ps5.c).
+[formati DualSense in SDL](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_ps5.c),
+[formati DualShock 4 in SDL](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_ps4.c).
 
 Drag e resize usano cattura del mouse e la posizione conservata nel messaggio
 di input, non la posizione corrente che potrebbe essere già cambiata quando

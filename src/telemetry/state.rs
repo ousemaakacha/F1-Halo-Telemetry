@@ -73,6 +73,7 @@ pub struct Snapshot {
     pub lap_status: Option<Timed<u8>>,
     pub current_lap: Option<Timed<u8>>,
     pub lap_history: Option<Timed<LapHistory>>,
+    pub gap_behind: Option<Timed<u32>>,
     pub session_paused: Option<Timed<bool>>,
     pub formula: Option<u8>,
     pub participants: Option<u8>,
@@ -132,6 +133,12 @@ impl Snapshot {
         history.value.delta_ms()
     }
 
+    pub fn gap_behind_ms(&self, now: Instant) -> Option<u32> {
+        self.gap_behind
+            .filter(|gap| self.driving(now) && gap.fresh(now, FAST_TTL))
+            .map(|gap| gap.value)
+    }
+
     pub fn freshness_mask(&self, now: Instant) -> u16 {
         (self.driving(now) as u16)
             | ((self.status.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 1)
@@ -139,6 +146,7 @@ impl Snapshot {
             | ((self.aero.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 3)
             | ((self.connection(now) as u16) << 4)
             | ((self.lap_history.is_some_and(|x| x.fresh(now, HISTORY_TTL)) as u16) << 8)
+            | ((self.gap_behind.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 9)
     }
 }
 
@@ -168,6 +176,7 @@ impl TelemetryState {
         self.snapshot.lap_status = None;
         self.snapshot.current_lap = None;
         self.snapshot.lap_history = None;
+        self.snapshot.gap_behind = None;
         self.snapshot.session_paused = None;
         self.snapshot.formula = None;
         self.snapshot.participants = None;
@@ -274,9 +283,14 @@ impl TelemetryState {
                 self.snapshot.session_paused = timed!(paused);
                 self.snapshot.formula = Some(formula);
             }
-            Packet::Lap(_, status, number) => {
-                self.snapshot.lap_status = timed!(status);
-                self.snapshot.current_lap = timed!(number);
+            Packet::Lap(_, lap) if !self.ended => {
+                self.snapshot.lap_status = timed!(lap.result_status);
+                self.snapshot.current_lap = timed!(lap.current_lap);
+                self.snapshot.gap_behind = lap.gap_behind_ms.map(|gap| Timed {
+                    value: gap,
+                    received: now,
+                    overall_frame: h.overall_frame,
+                });
             }
             Packet::History(_, history) if !self.ended => {
                 self.snapshot.lap_history = timed!(history)

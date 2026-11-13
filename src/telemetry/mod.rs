@@ -3,7 +3,7 @@ pub mod protocol;
 pub mod state;
 
 pub use protocol::{
-    Aero, CarStatus, CarTelemetry, Damage, Header, LapHistory, Packet, ParseError, parse,
+    Aero, CarStatus, CarTelemetry, Damage, Header, LapData, LapHistory, Packet, ParseError, parse,
 };
 pub use state::{Connection, Snapshot, TelemetryState, Timed};
 

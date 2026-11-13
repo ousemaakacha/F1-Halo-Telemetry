@@ -72,6 +72,14 @@ Il comando conserva posizione e preferenze di visibilità dei singoli HUD;
 alla riapertura dell'app la visibilità globale riparte attiva. Quando gli HUD
 sono nascosti la ricezione continua, mentre il rendering si arresta.
 
+Anche **due pressioni di Select entro 400 ms**, con rilascio fra le pressioni,
+mostrano o nascondono entrambi gli HUD: **View / Back** su Xbox,
+**Share** su DualShock 4 e **Create** su DualSense, a sinistra del touchpad.
+Il comando funziona anche con HUD già nascosti e con **Hide Halo: rear / sides**
+disattivato. Una pressione mantenuta non lo ripete; riconnessione e cambio
+controller azzerano la sequenza. Come la scorciatoia da tastiera, funziona anche
+quando il gioco non è in primo piano. I tasti restano disponibili al gioco.
+
 **Hide Halo: rear / sides**, attivo per impostazione iniziale, usa lo **stick
 destro del controller PS5 verso il basso, a destra o a sinistra**, senza premere
 R3: Halo scompare mentre guardi indietro o ai lati e torna quando riporti lo
@@ -81,8 +89,9 @@ in primo piano; in Demo ed Edit resta disattivato. La casella nel pannello,
 seguita da **Apply and save**, permette di disabilitarlo. Non cambia le
 preferenze di visibilità manuale: un Halo già nascosto rimane nascosto.
 
-Supporta DualSense USB/Bluetooth e controller esposti tramite XInput da Steam
-Input. I comandi del gioco per guardare indietro, a destra e a sinistra devono
+Supporta DualSense e DualShock 4 USB/Bluetooth, controller Xbox tramite XInput
+e controller esposti tramite XInput da Steam Input. I comandi del gioco per
+guardare indietro, a destra e a sinistra devono
 essere assegnati alle rispettive direzioni dello stick destro e tornare alla
 visuale anteriore al rilascio.
 
@@ -122,12 +131,12 @@ riavvio; i file impostazioni precedenti restano compatibili.
 **Halo model** permette di scegliere **Wide**, **Classic** oppure **modern**.
 Modern segue il nuovo riferimento: fascia antracite continua con gradiente,
 estremità arrotondate, bordo arancione, arco superiore sottile e quadrante più
-grande. Fuel, Straight Mode, delta giro e marce restano integrati nella fascia.
+grande. Fuel, Straight Mode, distacco live da chi segue e marce restano integrati nella fascia.
 Premere **Apply and save**: il cambio avviene
 senza riavviare l'app e conserva centro del quadrante, posizione, scala e opacità.
 La scelta viene salvata e ripristinata all'avvio. I profili precedenti usano Wide.
 Tutti i modelli mostrano le stesse telemetrie aggiornate: km/h, percentuale e
-modalità ERS, Fuel, pedali, Straight Mode con distanza, delta giro, marce e RPM.
+modalità ERS, Fuel, pedali, Straight Mode con distanza, distacco live da chi segue, marce e RPM.
 
 **Halo profile** salva posizioni e dimensioni diverse con nomi scelti da te,
 per esempio **Ferrari** e **Red Bull**:
@@ -167,7 +176,7 @@ scritta KM/H, sopra la velocità mostra la marcia corrente **R/N/1–8**; sotto,
 la percentuale ERS. La percentuale
 diventa azzurra quando Overtake è disponibile in zona, anche prima di attivare il
 boost, e torna bianca quando la disponibilità termina. Non compare una targhetta
-Overtake separata. Pedali a segmenti, Straight Mode e delta giro sull'ala sinistra;
+Overtake separata. Pedali a segmenti, Straight Mode e distacco live sull'ala sinistra;
 marce e scala RPM seguono la curva dell'ala destra. Il piccolo riquadro **FUEL**
 a sinistra dei pedali mostra il margine carburante live del MFD rispetto alla
 distanza di gara rimanente, con segno e un decimale: **+ 2.3** oppure **- 0.8**.
@@ -188,15 +197,15 @@ Senza dati recenti compare **SM --**; sulle vetture pre-2026 **SM N/A**.
 Sotto la batteria compare la modalità ERS corrente: **NONE**, **MEDIUM**,
 **HOTLAP** oppure **BOOST**.
 
-La riga che mostrava **AERO STRAIGHT/CORNER** ora mostra il delta fra l'ultimo
-giro completato e il miglior giro personale valido precedente della sessione:
-**+ 0.230** in rosso se più lento, **- 0.120** in verde se più rapido. Un nuovo
-record viene confrontato con quello precedente, così conserva il miglioramento
-negativo. Il pareggio **+ 0.000** è neutro. Il valore resta riferito all'ultimo
-giro concluso e viene rinnovato al successivo. Al primo giro valido, con ultimo
-giro invalido, dati mancanti o cronologia scaduta compare **--**.
-Straight Mode e delta seguono il contorno sinistro lettera per lettera in tutti
-i modelli. Il confronto si azzera al cambio sessione o dopo un flashback.
+Al posto del delta giro, la riga sinistra mostra il **distacco live dalla vettura
+subito dietro in classifica**, in secondi e millesimi: **+ 1.234** significa
+1,234 secondi di vantaggio. Il testo è bianco e si aggiorna a ogni pacchetto
+Lap Data, anche durante un giro invalido. Il valore usa l'intervallo comunicato
+dal gioco dalla vettura nella posizione successiva, indipendentemente dal suo
+indice UDP. Con nessuna vettura attiva dietro, ultima posizione, pausa o dati
+più vecchi di 500 ms compare **--**. Il distacco si azzera al cambio sorgente,
+sessione o dopo un flashback. La Demo mostra un distacco simulato variabile.
+Straight Mode e distacco seguono il contorno sinistro in tutti i modelli.
 Pannello impostazioni, menu, messaggi e diagnostica dell'app sono in inglese.
 Le scritte decorative HALO/26 e LIVE sono rimosse. Demo, attesa e anomalie
 conservano un'indicazione compatta, visibile soltanto quando necessaria.

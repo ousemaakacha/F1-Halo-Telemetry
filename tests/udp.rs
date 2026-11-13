@@ -34,10 +34,12 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
     let mut frame = 120;
     while start.elapsed() < Duration::from_secs(3) {
         // Exercise UDP lap timing without triggering unrelated game-asset discovery.
-        for packet in demo::sample(2.0, frame)
-            .into_iter()
-            .filter(|packet| matches!(packet, Packet::Telemetry(..) | Packet::History(..)))
-        {
+        for packet in demo::sample(2.0, frame).into_iter().filter(|packet| {
+            matches!(
+                packet,
+                Packet::Telemetry(..) | Packet::History(..) | Packet::Lap(..)
+            )
+        }) {
             let length = demo::encode(packet, &mut buffer);
             sender
                 .send_to(&buffer[..length], ("127.0.0.1", port))
@@ -45,7 +47,10 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
         }
         frame += 1;
         std::thread::sleep(Duration::from_millis(20));
-        if receiver.shared.read().unwrap().lap_delta_ms(Instant::now()) == Some(230) {
+        let snapshot = *receiver.shared.read().unwrap();
+        if snapshot.lap_delta_ms(Instant::now()) == Some(230)
+            && snapshot.gap_behind_ms(Instant::now()) == Some(2_536)
+        {
             received = true;
             break;
         }
@@ -69,6 +74,7 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
         assert!(cleared.ers_capacity.is_none());
         assert!(cleared.aero.is_none());
         assert!(cleared.lap_history.is_none());
+        assert!(cleared.gap_behind.is_none());
         assert!(cleared.telemetry.is_none());
         assert_eq!(cleared.source_epoch, 2);
     }

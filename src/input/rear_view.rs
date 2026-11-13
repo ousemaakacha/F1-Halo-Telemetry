@@ -21,31 +21,87 @@ use windows::{
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
 const RAW_TTL: Duration = Duration::from_millis(500);
+const DOUBLE_PRESS_WINDOW: Duration = Duration::from_millis(400);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ControllerState {
+    pub axes: [f32; 2],
+    pub select: bool,
+}
+
+#[derive(Clone, Copy)]
+enum PlayStation {
+    DualSense,
+    DualShock4,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ControllerSource {
+    Hid(usize),
+    XInput(u32),
+}
+
+#[derive(Default)]
+struct DoublePress {
+    pressed: Option<bool>,
+    first_press: Option<Instant>,
+}
+
+impl DoublePress {
+    fn update(&mut self, pressed: bool, now: Instant) -> bool {
+        let previous = self.pressed.replace(pressed);
+        // Require a release first when connecting or switching input sources.
+        if !pressed || previous != Some(false) {
+            return false;
+        }
+        if self
+            .first_press
+            .take()
+            .is_some_and(|first| now.saturating_duration_since(first) <= DOUBLE_PRESS_WINDOW)
+        {
+            return true;
+        }
+        self.first_press = Some(now);
+        false
+    }
+}
 
 thread_local! {
-    static DEVICES: RefCell<HashMap<usize, bool>> = RefCell::new(HashMap::new());
+    static DEVICES: RefCell<HashMap<usize, Option<PlayStation>>> = RefCell::new(HashMap::new());
 }
 
-fn axes_from_report(report: &[u8]) -> Option<[f32; 2]> {
-    let y = match report.first()? {
-        0x01 if matches!(report.len(), 10 | 64 | 78) => 4,
-        0x31 if report.len() == 78 => 5,
+fn state_from_report(report: &[u8], kind: PlayStation) -> Option<ControllerState> {
+    let (y, buttons) = match (kind, *report.first()?, report.len()) {
+        (PlayStation::DualSense, 0x01, 10 | 78) => (4, 6),
+        (PlayStation::DualSense, 0x01, 64) => (4, 9),
+        (PlayStation::DualSense, 0x31, 78) => (5, 10),
+        (PlayStation::DualShock4, 0x01, 10 | 64 | 78) => (4, 6),
+        (PlayStation::DualShock4, 0x11, 78) => (6, 8),
         _ => return None,
     };
-    Some([report[y - 1], report[y]].map(|value| {
-        let centered = value as f32 - 128.0;
-        centered / if value >= 128 { 127.0 } else { 128.0 }
-    }))
+    Some(ControllerState {
+        axes: [report[y - 1], report[y]].map(|value| {
+            let centered = value as f32 - 128.0;
+            centered / if value >= 128 { 127.0 } else { 128.0 }
+        }),
+        select: report[buttons] & 0x10 != 0,
+    })
 }
 
-fn latest_axes(data: &[u8], stride: usize, count: usize) -> Option<[f32; 2]> {
-    if stride == 0 || count == 0 || stride.checked_mul(count)? > data.len() {
+fn reports(
+    data: &[u8],
+    stride: usize,
+    count: usize,
+    kind: PlayStation,
+) -> Option<impl DoubleEndedIterator<Item = ControllerState> + '_> {
+    if stride == 0 || count == 0 {
         return None;
     }
-    data[..stride * count]
-        .chunks_exact(stride)
-        .filter_map(axes_from_report)
-        .next_back()
+    Some(
+        data.get(..stride.checked_mul(count)?)?
+            .chunks_exact(stride)
+            .filter_map(move |report| state_from_report(report, kind)),
+    )
 }
 
 pub fn held(was_held: bool, eligible: bool, axes: Option<[f32; 2]>) -> bool {
@@ -63,7 +119,7 @@ pub fn held(was_held: bool, eligible: bool, axes: Option<[f32; 2]>) -> bool {
         })
 }
 
-fn is_dualsense(handle: HANDLE) -> bool {
+fn playstation_kind(handle: HANDLE) -> Option<PlayStation> {
     let key = handle.0 as usize;
     DEVICES.with(|devices| {
         if let Some(accepted) = devices.borrow().get(&key) {
@@ -84,13 +140,19 @@ fn is_dualsense(handle: HANDLE) -> bool {
             )
         };
         if result == u32::MAX || info.dwType != RIM_TYPEHID {
-            return false;
+            return None;
         }
         let hid = unsafe { info.Anonymous.hid };
-        let accepted = hid.dwVendorId == 0x054c
-            && matches!(hid.dwProductId, 0x0ce6 | 0x0df2)
-            && hid.usUsagePage == 1
-            && matches!(hid.usUsage, 4 | 5);
+        let accepted =
+            if hid.dwVendorId == 0x054c && hid.usUsagePage == 1 && matches!(hid.usUsage, 4 | 5) {
+                match hid.dwProductId {
+                    0x0ce6 | 0x0df2 => Some(PlayStation::DualSense),
+                    0x05c4 | 0x09cc | 0x0ba0 => Some(PlayStation::DualShock4),
+                    _ => None,
+                }
+            } else {
+                None
+            };
         devices.borrow_mut().insert(key, accepted);
         accepted
     })
@@ -102,7 +164,7 @@ pub fn forget_device(device: usize) {
     });
 }
 
-pub fn read_raw(handle: HRAWINPUT) -> Option<(usize, [f32; 2])> {
+pub fn read_raw(handle: HRAWINPUT, mut receive: impl FnMut(usize, ControllerState)) {
     let mut storage = [0u64; 128];
     let mut size = size_of::<[u64; 128]>() as u32;
     // Read during WM_INPUT dispatch, before DefWindowProc releases the handle.
@@ -118,13 +180,16 @@ pub fn read_raw(handle: HRAWINPUT) -> Option<(usize, [f32; 2])> {
     let offset = size_of::<RAWINPUTHEADER>() + 8;
     if copied == u32::MAX || (copied as usize) < offset || copied as usize > size_of::<[u64; 128]>()
     {
-        return None;
+        return;
     }
     // SAFETY: storage is aligned and initialized; copied header/HID lengths are checked.
     let raw = unsafe { &*storage.as_ptr().cast::<RAWINPUT>() };
-    if raw.header.dwType != RIM_TYPEHID.0 || !is_dualsense(raw.header.hDevice) {
-        return None;
+    if raw.header.dwType != RIM_TYPEHID.0 {
+        return;
     }
+    let Some(kind) = playstation_kind(raw.header.hDevice) else {
+        return;
+    };
     let hid = unsafe { raw.data.hid };
     let bytes = unsafe {
         std::slice::from_raw_parts(
@@ -132,15 +197,22 @@ pub fn read_raw(handle: HRAWINPUT) -> Option<(usize, [f32; 2])> {
             copied as usize - offset,
         )
     };
-    latest_axes(bytes, hid.dwSizeHid as usize, hid.dwCount as usize)
-        .map(|axes| (raw.header.hDevice.0 as usize, axes))
+    for state in reports(bytes, hid.dwSizeHid as usize, hid.dwCount as usize, kind)
+        .into_iter()
+        .flatten()
+    {
+        receive(raw.header.hDevice.0 as usize, state);
+    }
 }
 
 pub struct RearInput {
-    raw: Option<(usize, [f32; 2], Instant)>,
+    raw: Option<(usize, ControllerState, Instant)>,
     xinput_slot: Option<u32>,
     next_scan: Instant,
     foreground: Option<(HWND, u32, bool)>,
+    active_source: Option<ControllerSource>,
+    select: DoublePress,
+    toggle_requested: bool,
     pub raw_registered: bool,
     pub raw_samples: u64,
     pub last_axes: Option<[f32; 2]>,
@@ -154,6 +226,9 @@ impl Default for RearInput {
             xinput_slot: None,
             next_scan: Instant::now(),
             foreground: None,
+            active_source: None,
+            select: DoublePress::default(),
+            toggle_requested: false,
             raw_registered: false,
             raw_samples: 0,
             last_axes: None,
@@ -178,11 +253,27 @@ impl RearInput {
         Ok(())
     }
 
-    pub fn receive(&mut self, device: usize, axes: [f32; 2], now: Instant) {
-        self.raw = Some((device, axes, now));
-        self.last_axes = Some(axes);
-        self.source = "DualSense HID";
+    pub fn receive(&mut self, device: usize, state: ControllerState, now: Instant) {
+        self.raw = Some((device, state, now));
+        self.observe(ControllerSource::Hid(device), state, now);
         self.raw_samples = self.raw_samples.saturating_add(1);
+    }
+
+    fn observe(&mut self, source: ControllerSource, state: ControllerState, now: Instant) {
+        if self.active_source != Some(source) {
+            self.select = DoublePress::default();
+            self.active_source = Some(source);
+        }
+        self.last_axes = Some(state.axes);
+        self.source = match source {
+            ControllerSource::Hid(_) => "PlayStation HID",
+            ControllerSource::XInput(_) => "XInput / Steam Input",
+        };
+        self.toggle_requested ^= self.select.update(state.select, now);
+    }
+
+    pub fn take_toggle(&mut self) -> bool {
+        std::mem::take(&mut self.toggle_requested)
     }
 
     pub fn remove(&mut self, device: usize) {
@@ -192,39 +283,39 @@ impl RearInput {
             self.source = "none";
             self.xinput_slot = None;
             self.next_scan = Instant::now() + Duration::from_secs(1);
+            self.active_source = None;
+            self.select = DoublePress::default();
         }
     }
 
-    fn recent_raw(&self, now: Instant) -> Option<[f32; 2]> {
+    fn recent_raw(&self, now: Instant) -> Option<(usize, ControllerState, Instant)> {
         self.raw
             .filter(|(_, _, received)| now.saturating_duration_since(*received) <= RAW_TTL)
-            .map(|(_, axes, _)| axes)
     }
 
     pub fn poll(&mut self, now: Instant) -> Option<[f32; 2]> {
-        if let Some(axes) = self.recent_raw(now) {
-            self.source = "DualSense HID";
-            self.last_axes = Some(axes);
-            return Some(axes);
+        if let Some((device, state, _)) = self.recent_raw(now) {
+            self.observe(ControllerSource::Hid(device), state, now);
+            return Some(state.axes);
         }
         if let Some(slot) = self.xinput_slot {
-            if let Some(axes) = xinput_axes(slot) {
-                self.source = "XInput / Steam Input";
-                self.last_axes = Some(axes);
-                return Some(axes);
+            if let Some(state) = xinput_state(slot) {
+                self.observe(ControllerSource::XInput(slot), state, now);
+                return Some(state.axes);
             }
             self.xinput_slot = None;
         }
         self.source = "none";
         self.last_axes = None;
+        self.active_source = None;
+        self.select = DoublePress::default();
         if now >= self.next_scan {
             self.next_scan = now + Duration::from_secs(1);
             for slot in 0..4 {
-                if let Some(axes) = xinput_axes(slot) {
+                if let Some(state) = xinput_state(slot) {
                     self.xinput_slot = Some(slot);
-                    self.source = "XInput / Steam Input";
-                    self.last_axes = Some(axes);
-                    return Some(axes);
+                    self.observe(ControllerSource::XInput(slot), state, now);
+                    return Some(state.axes);
                 }
             }
         }
@@ -255,12 +346,19 @@ fn axes_from_xinput(gamepad: &XINPUT_GAMEPAD) -> [f32; 2] {
     ]
 }
 
-fn xinput_axes(slot: u32) -> Option<[f32; 2]> {
+fn xinput_state(slot: u32) -> Option<ControllerState> {
     let mut state = XINPUT_STATE::default();
     if unsafe { XInputGetState(slot, &mut state) } != 0 {
         return None;
     }
-    Some(axes_from_xinput(&state.Gamepad))
+    Some(state_from_xinput(&state.Gamepad))
+}
+
+fn state_from_xinput(gamepad: &XINPUT_GAMEPAD) -> ControllerState {
+    ControllerState {
+        axes: axes_from_xinput(gamepad),
+        select: gamepad.wButtons & XINPUT_GAMEPAD_BACK != XINPUT_GAMEPAD_BUTTON_FLAGS(0),
+    }
 }
 
 fn game_process(pid: u32) -> bool {
@@ -291,6 +389,117 @@ fn game_process(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn axes_from_report(report: &[u8]) -> Option<[f32; 2]> {
+        state_from_report(report, PlayStation::DualSense).map(|state| state.axes)
+    }
+
+    #[test]
+    fn select_requires_two_separate_presses_within_400_ms() {
+        let now = Instant::now();
+        for (delay, expected) in [(400, true), (401, false)] {
+            let mut select = DoublePress::default();
+            assert!(!select.update(false, now));
+            assert!(!select.update(true, now));
+            assert!(!select.update(true, now + Duration::from_millis(50)));
+            assert!(!select.update(false, now + Duration::from_millis(100)));
+            assert_eq!(
+                select.update(true, now + Duration::from_millis(delay)),
+                expected
+            );
+            assert!(!select.update(true, now + Duration::from_millis(delay + 10)));
+        }
+        let mut select = DoublePress::default();
+        assert!(!select.update(true, now));
+        assert!(!select.update(false, now));
+        assert!(!select.update(true, now));
+        assert!(!select.update(false, now));
+        assert!(select.update(true, now));
+        assert!(!select.update(false, now));
+        assert!(!select.update(true, now));
+    }
+
+    #[test]
+    fn playstation_select_uses_share_create_in_each_report_layout() {
+        for (kind, id, length, y, buttons) in [
+            (PlayStation::DualSense, 1, 10, 4, 6),
+            (PlayStation::DualSense, 1, 78, 4, 6),
+            (PlayStation::DualSense, 1, 64, 4, 9),
+            (PlayStation::DualSense, 0x31, 78, 5, 10),
+            (PlayStation::DualShock4, 1, 64, 4, 6),
+            (PlayStation::DualShock4, 0x11, 78, 6, 8),
+        ] {
+            let mut report = vec![0; length];
+            report[0] = id;
+            report[y - 1] = 128;
+            report[y] = 255;
+            report[buttons] = 0xef;
+            let state = state_from_report(&report, kind).unwrap();
+            assert_eq!(state.axes, [0.0, 1.0]);
+            assert!(!state.select);
+            report[buttons] = 0x10;
+            assert!(state_from_report(&report, kind).unwrap().select);
+        }
+        for buttons in [
+            XINPUT_GAMEPAD_START,
+            XINPUT_GAMEPAD_RIGHT_THUMB,
+            XINPUT_GAMEPAD_A,
+        ] {
+            assert!(
+                !state_from_xinput(&XINPUT_GAMEPAD {
+                    wButtons: buttons,
+                    ..Default::default()
+                })
+                .select
+            );
+        }
+        assert!(
+            state_from_xinput(&XINPUT_GAMEPAD {
+                wButtons: XINPUT_GAMEPAD_BACK,
+                ..Default::default()
+            })
+            .select
+        );
+    }
+
+    #[test]
+    fn select_toggle_survives_hidden_huds_and_clears_on_device_or_source_changes() {
+        let now = Instant::now();
+        let mut input = RearInput::default();
+        let state = |select| ControllerState {
+            select,
+            ..Default::default()
+        };
+        let mut visible = true;
+        for _ in 0..2 {
+            for pressed in [false, true, false, true, false] {
+                input.receive(7, state(pressed), now);
+                if input.take_toggle() {
+                    visible = !visible;
+                }
+            }
+        }
+        assert!(visible);
+        assert!(!input.take_toggle());
+        input.receive(7, state(true), now);
+        input.remove(7);
+        input.receive(7, state(false), now);
+        input.receive(7, state(true), now);
+        assert!(!input.take_toggle());
+        input.receive(8, state(false), now);
+        input.receive(8, state(true), now);
+        assert!(!input.take_toggle());
+        input.observe(ControllerSource::XInput(0), state(false), now);
+        input.observe(ControllerSource::XInput(0), state(true), now);
+        assert!(!input.take_toggle());
+        input.observe(ControllerSource::XInput(0), state(false), now);
+        input.observe(ControllerSource::XInput(0), state(true), now);
+        assert!(input.take_toggle());
+        input.poll(now + RAW_TTL + Duration::from_secs(1));
+        input.receive(8, state(false), now + RAW_TTL + Duration::from_secs(1));
+        input.receive(8, state(true), now + RAW_TTL + Duration::from_secs(1));
+        assert!(!input.take_toggle());
+    }
 
     #[test]
     fn decodes_right_stick_usb_and_bluetooth_without_using_clicks_or_left_stick() {
@@ -355,16 +564,27 @@ mod tests {
 
     #[test]
     fn batched_reports_use_the_release_and_reject_invalid_sizes() {
-        let mut reports = [128u8; 20];
-        reports[0] = 1;
-        reports[3] = 255;
-        reports[4] = 255;
-        reports[10] = 1;
-        assert_eq!(latest_axes(&reports, 10, 2), Some([0.0, 0.0]));
-        assert_eq!(latest_axes(&reports, 0, 2), None);
-        assert_eq!(latest_axes(&reports, 10, 0), None);
-        assert_eq!(latest_axes(&reports, 10, 3), None);
-        assert_eq!(latest_axes(&reports, usize::MAX, 2), None);
+        let mut bytes = [128u8; 50];
+        for (report, pressed) in bytes
+            .chunks_exact_mut(10)
+            .zip([false, true, false, true, false])
+        {
+            report[0] = 1;
+            report[6] = if pressed { 0x10 } else { 0 };
+        }
+        bytes[3] = 255;
+        bytes[4] = 255;
+        let mut input = RearInput::default();
+        let now = Instant::now();
+        for state in reports(&bytes, 10, 5, PlayStation::DualSense).unwrap() {
+            input.receive(7, state, now);
+        }
+        assert_eq!(input.last_axes, Some([0.0, 0.0]));
+        assert!(input.take_toggle());
+        assert!(reports(&bytes, 0, 5, PlayStation::DualSense).is_none());
+        assert!(reports(&bytes, 10, 0, PlayStation::DualSense).is_none());
+        assert!(reports(&bytes, 10, 6, PlayStation::DualSense).is_none());
+        assert!(reports(&bytes, usize::MAX, 2, PlayStation::DualSense).is_none());
     }
 
     #[test]
@@ -420,14 +640,29 @@ mod tests {
     fn stale_or_disconnected_native_input_cannot_leave_halo_hidden() {
         let now = Instant::now();
         let mut input = RearInput::default();
-        input.receive(7, [-1.0, 0.0], now);
-        assert_eq!(input.recent_raw(now + RAW_TTL), Some([-1.0, 0.0]));
+        input.receive(
+            7,
+            ControllerState {
+                axes: [-1.0, 0.0],
+                select: false,
+            },
+            now,
+        );
+        assert_eq!(
+            input
+                .recent_raw(now + RAW_TTL)
+                .map(|(_, state, _)| state.axes),
+            Some([-1.0, 0.0])
+        );
         assert_eq!(
             input.recent_raw(now + RAW_TTL + Duration::from_millis(1)),
             None
         );
         input.remove(8);
-        assert_eq!(input.recent_raw(now), Some([-1.0, 0.0]));
+        assert_eq!(
+            input.recent_raw(now).map(|(_, state, _)| state.axes),
+            Some([-1.0, 0.0])
+        );
         input.remove(7);
         assert_eq!(input.recent_raw(now), None);
     }

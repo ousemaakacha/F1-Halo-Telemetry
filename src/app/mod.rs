@@ -168,7 +168,7 @@ pub fn run(options: Options) -> Result<(), String> {
     );
     app.hotkeys = bindings;
     if let Err(error) = app.rear_input.register(app.panel.hwnd) {
-        hotkey_errors.push(format!("DualSense input unavailable: {error}"));
+        hotkey_errors.push(format!("PlayStation input unavailable: {error}"));
     }
     if !app.options.no_settings {
         app.panel.show();
@@ -332,7 +332,7 @@ impl App {
                 self.fresh_mask = mask;
                 self.dirty = true;
             }
-            let poll_rear = self.update_rear_view(now);
+            let poll_controller = self.update_controller(now);
             if self.graphics.is_none() && now >= self.graphics_retry {
                 match self.create_graphics() {
                     Ok(()) => self.diagnostics.device_recreations += 1,
@@ -374,7 +374,7 @@ impl App {
                 self.update_status(now);
             }
             let mut deadline = now + Duration::from_millis(250);
-            if poll_rear {
+            if poll_controller {
                 deadline = deadline.min(now + rear_view::POLL_INTERVAL);
             }
             if self.dirty && visible && self.graphics.is_some() {
@@ -402,6 +402,10 @@ impl App {
                 (
                     self.snapshot.damage.map(|v| v.received),
                     crate::telemetry::state::DAMAGE_TTL,
+                ),
+                (
+                    self.snapshot.gap_behind.map(|v| v.received),
+                    crate::telemetry::state::FAST_TTL,
                 ),
             ] {
                 if let Some(expiry) = received
@@ -505,17 +509,18 @@ impl App {
         Ok(())
     }
 
-    fn update_rear_view(&mut self, now: Instant) -> bool {
+    fn update_controller(&mut self, now: Instant) -> bool {
+        let axes = self.rear_input.poll(now);
+        if self.rear_input.take_toggle() {
+            if let Err(error) = self.set_overlays_visible(!self.overlays_visible) {
+                self.panel.result(&error);
+            }
+        }
         let eligible = self.settings.hide_halo_rear_view
             && !self.edit
             && !self.demo
             && self.snapshot.driving(now)
             && self.rear_input.game_focused();
-        let axes = if eligible {
-            self.rear_input.poll(now)
-        } else {
-            None
-        };
         let hidden = rear_view::held(self.rear_hidden, eligible, axes);
         if hidden != self.rear_hidden {
             let previous = self.rear_hidden;
@@ -532,7 +537,7 @@ impl App {
                 self.previous_live = false;
             }
         }
-        eligible
+        axes.is_some()
     }
 
     fn set_overlays_visible(&mut self, visible: bool) -> Result<(), String> {
@@ -551,7 +556,7 @@ impl App {
         self.panel.result(if visible {
             "HUDs shown according to individual visibility settings."
         } else {
-            "HUDs hidden. Telemetry continues; press the visibility hotkey to show them."
+            "HUDs hidden. Telemetry continues; use the hotkey or double-press Select to show them."
         });
         Ok(())
     }
@@ -707,8 +712,8 @@ impl App {
     fn action(&mut self, action: Action) -> Result<(), String> {
         match action {
             Action::Dirty => self.dirty = true,
-            Action::ControllerAxes(device, axes) => {
-                self.rear_input.receive(device, axes, Instant::now())
+            Action::ControllerInput(device, state) => {
+                self.rear_input.receive(device, state, Instant::now())
             }
             Action::ControllerRemoved(device) => self.rear_input.remove(device),
             Action::Quit => self.quit = true,
@@ -925,7 +930,7 @@ impl App {
             "fuel_margin_laps": self.snapshot.status.map(|s| s.value.fuel_remaining_laps),
             "gear": self.snapshot.telemetry.map(|t| t.value.gear),
             "speed_kmh": self.snapshot.telemetry.map(|t| t.value.speed_kmh),
-            "lap_delta_ms": self.snapshot.lap_delta_ms(now),
+            "gap_behind_ms": self.snapshot.gap_behind_ms(now),
             "lap_history": self.snapshot.lap_history.map(|h| serde_json::json!({
                 "completed_laps": h.value.completed_laps,
                 "last_lap_ms": h.value.last_lap_ms,

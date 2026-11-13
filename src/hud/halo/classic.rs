@@ -99,7 +99,7 @@ impl Classic {
         tel: Option<CarTelemetry>,
         status: Option<CarStatus>,
         aero: Option<Aero>,
-        delta: Option<i64>,
+        delta: Option<u32>,
         settings: &Settings,
     ) {
         let accent = settings.colours.accent;
@@ -116,7 +116,7 @@ impl Classic {
                 MUTED
             },
         );
-        draw_lap_delta(p, delta, &self.delta_text, settings);
+        draw_gap_behind(p, delta, &self.delta_text);
         draw_fuel(p, status, &self.fuel_text, 1.0);
         p.rotated((650.0, 160.0), 22.0, |p| {
             let wing = rect(550.0, 124.0, 224.0, 70.0);
