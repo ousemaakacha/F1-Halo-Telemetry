@@ -448,7 +448,7 @@ impl Panel {
         )?;
         self.edit(HOTKEY, 264, 291, 580)?;
         self.label(
-            "Show or hide both HUDs. Controller: double-press View / Share / Create.",
+            "Show/hide both HUDs: double-press View, Share or PS5 left touchpad.",
             264,
             437,
             580,

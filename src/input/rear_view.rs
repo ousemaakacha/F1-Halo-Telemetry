@@ -6,7 +6,11 @@ use std::{
 };
 use windows::{
     Win32::{
+        Devices::HumanInterfaceDevice::HidD_GetFeature,
         Foundation::{CloseHandle, HANDLE, HWND},
+        Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        },
         System::Threading::{
             OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
             QueryFullProcessImageNameW,
@@ -16,7 +20,7 @@ use windows::{
             WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId},
         },
     },
-    core::{PWSTR, Result},
+    core::{PCWSTR, PWSTR, Result},
 };
 
 pub const POLL_INTERVAL: Duration = Duration::from_millis(16);
@@ -27,6 +31,7 @@ const DOUBLE_PRESS_WINDOW: Duration = Duration::from_millis(400);
 pub struct ControllerState {
     pub axes: [f32; 2],
     pub select: bool,
+    pub toggle_allowed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -48,10 +53,14 @@ struct DoublePress {
 }
 
 impl DoublePress {
-    fn update(&mut self, pressed: bool, now: Instant) -> bool {
+    fn update(&mut self, pressed: bool, allowed: bool, now: Instant) -> bool {
         let previous = self.pressed.replace(pressed);
         // Require a release first when connecting or switching input sources.
         if !pressed || previous != Some(false) {
+            return false;
+        }
+        if !allowed {
+            self.first_press = None;
             return false;
         }
         if self
@@ -71,20 +80,34 @@ thread_local! {
 }
 
 fn state_from_report(report: &[u8], kind: PlayStation) -> Option<ControllerState> {
-    let (y, buttons) = match (kind, *report.first()?, report.len()) {
-        (PlayStation::DualSense, 0x01, 10 | 78) => (4, 6),
-        (PlayStation::DualSense, 0x01, 64) => (4, 9),
-        (PlayStation::DualSense, 0x31, 78) => (5, 10),
-        (PlayStation::DualShock4, 0x01, 10 | 64 | 78) => (4, 6),
-        (PlayStation::DualShock4, 0x11, 78) => (6, 8),
+    let (y, buttons, touches) = match (kind, *report.first()?, report.len()) {
+        (PlayStation::DualSense, 0x01, 10 | 78) => (4, 6, None),
+        (PlayStation::DualSense, 0x01, 64) => (4, 9, Some(33)),
+        (PlayStation::DualSense, 0x31, 78) => (5, 10, Some(34)),
+        (PlayStation::DualShock4, 0x01, 10 | 64 | 78) => (4, 6, None),
+        (PlayStation::DualShock4, 0x11, 78) => (6, 8, None),
         _ => return None,
+    };
+    let (select, toggle_allowed) = match kind {
+        PlayStation::DualSense => (
+            report[buttons + 1] & 0x02 != 0,
+            touches.is_some_and(|start| {
+                report[start..start + 8].chunks_exact(4).any(|point| {
+                    let x = u16::from(point[1]) | (u16::from(point[2] & 0x0f) << 8);
+                    let y = u16::from(point[2] >> 4) | (u16::from(point[3]) << 4);
+                    point[0] & 0x80 == 0 && x < 960 && y < 1080
+                })
+            }),
+        ),
+        PlayStation::DualShock4 => (report[buttons] & 0x10 != 0, true),
     };
     Some(ControllerState {
         axes: [report[y - 1], report[y]].map(|value| {
             let centered = value as f32 - 128.0;
             centered / if value >= 128 { 127.0 } else { 128.0 }
         }),
-        select: report[buttons] & 0x10 != 0,
+        select,
+        toggle_allowed,
     })
 }
 
@@ -154,8 +177,47 @@ fn playstation_kind(handle: HANDLE) -> Option<PlayStation> {
                 None
             };
         devices.borrow_mut().insert(key, accepted);
+        if matches!(accepted, Some(PlayStation::DualSense)) {
+            request_dualsense_touch_reports(handle);
+        }
         accepted
     })
+}
+
+fn request_dualsense_touch_reports(raw_device: HANDLE) {
+    let mut path = [0u16; 1024];
+    let mut length = path.len() as u32;
+    let copied = unsafe {
+        GetRawInputDeviceInfoW(
+            Some(raw_device),
+            RIDI_DEVICENAME,
+            Some(path.as_mut_ptr().cast()),
+            &mut length,
+        )
+    };
+    if copied == u32::MAX || copied == 0 || copied as usize >= path.len() {
+        return;
+    }
+    let Ok(device) = (unsafe {
+        CreateFileW(
+            PCWSTR(path.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            None,
+        )
+    }) else {
+        return;
+    };
+    let mut feature = [0u8; 64];
+    feature[0] = 0x09;
+    // Reading the serial feature enables Bluetooth touch coordinates; reports remain authoritative if unavailable.
+    unsafe {
+        let _ = HidD_GetFeature(device, feature.as_mut_ptr().cast(), feature.len() as u32);
+        let _ = CloseHandle(device);
+    }
 }
 
 pub fn forget_device(device: usize) {
@@ -269,7 +331,7 @@ impl RearInput {
             ControllerSource::Hid(_) => "PlayStation HID",
             ControllerSource::XInput(_) => "XInput / Steam Input",
         };
-        self.toggle_requested ^= self.select.update(state.select, now);
+        self.toggle_requested ^= self.select.update(state.select, state.toggle_allowed, now);
     }
 
     pub fn take_toggle(&mut self) -> bool {
@@ -358,6 +420,7 @@ fn state_from_xinput(gamepad: &XINPUT_GAMEPAD) -> ControllerState {
     ControllerState {
         axes: axes_from_xinput(gamepad),
         select: gamepad.wButtons & XINPUT_GAMEPAD_BACK != XINPUT_GAMEPAD_BUTTON_FLAGS(0),
+        toggle_allowed: true,
     }
 }
 
@@ -399,33 +462,31 @@ mod tests {
         let now = Instant::now();
         for (delay, expected) in [(400, true), (401, false)] {
             let mut select = DoublePress::default();
-            assert!(!select.update(false, now));
-            assert!(!select.update(true, now));
-            assert!(!select.update(true, now + Duration::from_millis(50)));
-            assert!(!select.update(false, now + Duration::from_millis(100)));
+            assert!(!select.update(false, true, now));
+            assert!(!select.update(true, true, now));
+            assert!(!select.update(true, true, now + Duration::from_millis(50)));
+            assert!(!select.update(false, true, now + Duration::from_millis(100)));
             assert_eq!(
-                select.update(true, now + Duration::from_millis(delay)),
+                select.update(true, true, now + Duration::from_millis(delay)),
                 expected
             );
-            assert!(!select.update(true, now + Duration::from_millis(delay + 10)));
+            assert!(!select.update(true, true, now + Duration::from_millis(delay + 10)));
         }
         let mut select = DoublePress::default();
-        assert!(!select.update(true, now));
-        assert!(!select.update(false, now));
-        assert!(!select.update(true, now));
-        assert!(!select.update(false, now));
-        assert!(select.update(true, now));
-        assert!(!select.update(false, now));
-        assert!(!select.update(true, now));
+        assert!(!select.update(true, true, now));
+        assert!(!select.update(false, true, now));
+        assert!(!select.update(true, true, now));
+        assert!(!select.update(false, true, now));
+        assert!(select.update(true, true, now));
+        assert!(!select.update(false, true, now));
+        assert!(!select.update(true, true, now));
     }
 
     #[test]
-    fn playstation_select_uses_share_create_in_each_report_layout() {
+    fn ps4_and_xinput_keep_share_and_back_shortcuts() {
         for (kind, id, length, y, buttons) in [
-            (PlayStation::DualSense, 1, 10, 4, 6),
-            (PlayStation::DualSense, 1, 78, 4, 6),
-            (PlayStation::DualSense, 1, 64, 4, 9),
-            (PlayStation::DualSense, 0x31, 78, 5, 10),
+            (PlayStation::DualShock4, 1, 10, 4, 6),
+            (PlayStation::DualShock4, 1, 78, 4, 6),
             (PlayStation::DualShock4, 1, 64, 4, 6),
             (PlayStation::DualShock4, 0x11, 78, 6, 8),
         ] {
@@ -439,6 +500,7 @@ mod tests {
             assert!(!state.select);
             report[buttons] = 0x10;
             assert!(state_from_report(&report, kind).unwrap().select);
+            assert!(state_from_report(&report, kind).unwrap().toggle_allowed);
         }
         for buttons in [
             XINPUT_GAMEPAD_START,
@@ -462,12 +524,131 @@ mod tests {
         );
     }
 
+    fn ps5_report(bluetooth: bool, clicked: bool, points: [Option<(u16, u16)>; 2]) -> Vec<u8> {
+        let (length, y, button, touches) = if bluetooth {
+            (78, 5, 11, 34)
+        } else {
+            (64, 4, 10, 33)
+        };
+        let mut report = vec![0; length];
+        report[0] = if bluetooth { 0x31 } else { 0x01 };
+        report[y - 1] = 128;
+        report[y] = 128;
+        report[button] = if clicked { 0x02 } else { 0 };
+        for (index, point) in points.into_iter().enumerate() {
+            let offset = touches + 4 * index;
+            if let Some((x, y)) = point {
+                report[offset + 1] = x as u8;
+                report[offset + 2] = ((x >> 8) as u8 & 0x0f) | ((y as u8 & 0x0f) << 4);
+                report[offset + 3] = (y >> 4) as u8;
+            } else {
+                report[offset] = 0x80;
+            }
+        }
+        report
+    }
+
+    #[test]
+    fn ps5_uses_left_touchpad_click_in_usb_and_bluetooth_reports() {
+        for bluetooth in [false, true] {
+            for (point, left) in [
+                ((0, 0), true),
+                ((959, 1079), true),
+                ((960, 100), false),
+                ((1919, 100), false),
+                ((4095, 100), false),
+                ((100, 1080), false),
+            ] {
+                for slot in 0..2 {
+                    let mut points = [None, None];
+                    points[slot] = Some(point);
+                    for clicked in [false, true] {
+                        let report = ps5_report(bluetooth, clicked, points);
+                        let state = state_from_report(&report, PlayStation::DualSense).unwrap();
+                        assert_eq!(state.select, clicked);
+                        assert_eq!(state.toggle_allowed, left);
+                        assert_eq!(state.axes, [0.0, 0.0]);
+                    }
+                }
+            }
+            let mut report = ps5_report(bluetooth, false, [Some((100, 100)), None]);
+            report[if bluetooth { 10 } else { 9 }] = 0x10;
+            assert!(
+                !state_from_report(&report, PlayStation::DualSense)
+                    .unwrap()
+                    .select
+            );
+            let report = ps5_report(bluetooth, true, [None, None]);
+            assert!(
+                !state_from_report(&report, PlayStation::DualSense)
+                    .unwrap()
+                    .toggle_allowed
+            );
+        }
+        for length in [10, 78] {
+            let mut report = vec![0; length];
+            report[0] = 1;
+            report[6] = 0x10;
+            report[7] = 0x02;
+            assert!(
+                !state_from_report(&report, PlayStation::DualSense)
+                    .unwrap()
+                    .toggle_allowed
+            );
+        }
+    }
+
+    #[test]
+    fn ps5_toggle_requires_two_left_clicks_and_cannot_repeat_when_sliding_while_held() {
+        let now = Instant::now();
+        for bluetooth in [false, true] {
+            let mut input = RearInput::default();
+            for (clicked, x, expected) in [
+                (false, 100, false),
+                (true, 1500, false),
+                (true, 100, false),
+                (false, 100, false),
+                (true, 100, false),
+                (true, 1500, false),
+                (true, 100, false),
+                (false, 100, false),
+                (true, 100, true),
+                (true, 100, false),
+            ] {
+                let report = ps5_report(bluetooth, clicked, [Some((x, 100)), None]);
+                input.receive(
+                    7,
+                    state_from_report(&report, PlayStation::DualSense).unwrap(),
+                    now,
+                );
+                assert_eq!(input.take_toggle(), expected);
+            }
+            let mut input = RearInput::default();
+            let bytes = [false, true, false, true, false]
+                .into_iter()
+                .flat_map(|clicked| ps5_report(bluetooth, clicked, [Some((100, 100)), None]))
+                .collect::<Vec<_>>();
+            for state in reports(
+                &bytes,
+                if bluetooth { 78 } else { 64 },
+                5,
+                PlayStation::DualSense,
+            )
+            .unwrap()
+            {
+                input.receive(7, state, now);
+            }
+            assert!(input.take_toggle());
+        }
+    }
+
     #[test]
     fn select_toggle_survives_hidden_huds_and_clears_on_device_or_source_changes() {
         let now = Instant::now();
         let mut input = RearInput::default();
         let state = |select| ControllerState {
             select,
+            toggle_allowed: true,
             ..Default::default()
         };
         let mut visible = true;
@@ -576,7 +757,7 @@ mod tests {
         bytes[4] = 255;
         let mut input = RearInput::default();
         let now = Instant::now();
-        for state in reports(&bytes, 10, 5, PlayStation::DualSense).unwrap() {
+        for state in reports(&bytes, 10, 5, PlayStation::DualShock4).unwrap() {
             input.receive(7, state, now);
         }
         assert_eq!(input.last_axes, Some([0.0, 0.0]));
@@ -645,6 +826,7 @@ mod tests {
             ControllerState {
                 axes: [-1.0, 0.0],
                 select: false,
+                toggle_allowed: true,
             },
             now,
         );

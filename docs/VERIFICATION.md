@@ -1,5 +1,28 @@
 # Local verification
 
+## PS5: doppio clic sulla metà sinistra del touchpad — 13 novembre 2026
+
+Il DualSense usa ora il clic fisico del touchpad con un contatto attivo a
+sinistra, in sostituzione di Create. Restano necessarie due pressioni entro
+400 ms, con rilascio fra le pressioni. I test con report USB e Bluetooth
+coprono entrambi gli slot dito, limite sinistro/centro 959/960, coordinate non
+valide, contatti assenti, semplice sfioramento, Create e spostamento del dito
+mentre il pulsante è tenuto premuto. I batch conservano tutte le transizioni.
+I report semplici senza coordinate non possono attivare il comando.
+Back/View Xbox e Share DualShock 4 conservano i rispettivi controlli.
+
+L'app richiede i report completi DualSense leggendo una volta la feature HID
+seriale `0x09` da un handle condiviso, poi lo chiude. Formati, offset e dimensioni
+del touchpad verificati sui sorgenti [SDL](https://github.com/libsdl-org/SDL/blob/main/src/joystick/hidapi/SDL_hidapi_ps5.c)
+e sul [driver Sony per Linux](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-playstation.c).
+
+Passati **84 test** (47 unit, 5 game data, 29 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release. Uno
+[smoke test nativo di 3 secondi](../artifacts/ps5-left-touchpad-smoke.json)
+ha prodotto 158 frame, una ricreazione grafica, zero errori di presentazione
+e 1911 campioni Raw Input, con registrazione HID riuscita.
+Il gesto fisico sul touchpad e una sessione reale di F1 25 restano da verificare.
+
 ## Select doppio e distacco posteriore live — 13 novembre 2026
 
 Due pressioni entro 400 ms di View/Back Xbox oppure Share/Create PlayStation

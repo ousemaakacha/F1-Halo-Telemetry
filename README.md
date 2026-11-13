@@ -72,9 +72,14 @@ Il comando conserva posizione e preferenze di visibilità dei singoli HUD;
 alla riapertura dell'app la visibilità globale riparte attiva. Quando gli HUD
 sono nascosti la ricezione continua, mentre il rendering si arresta.
 
-Anche **due pressioni di Select entro 400 ms**, con rilascio fra le pressioni,
+Anche **due pressioni entro 400 ms**, con rilascio fra le pressioni,
 mostrano o nascondono entrambi gli HUD: **View / Back** su Xbox,
-**Share** su DualShock 4 e **Create** su DualSense, a sinistra del touchpad.
+**Share** su DualShock 4 e **clic fisico sulla metà sinistra del touchpad** su
+DualSense PS5. Il dito deve trovarsi a sinistra quando inizi ciascun clic;
+sfiorare il touchpad o spostare il dito tenendo premuto non ripete il comando.
+Il DualSense deve essere accessibile tramite HID: l'app legge le coordinate nei
+report USB/Bluetooth completi e ne richiede l'attivazione al collegamento.
+I soli report XInput virtuali non distinguono le due metà del touchpad.
 Il comando funziona anche con HUD già nascosti e con **Hide Halo: rear / sides**
 disattivato. Una pressione mantenuta non lo ripete; riconnessione e cambio
 controller azzerano la sequenza. Come la scorciatoia da tastiera, funziona anche

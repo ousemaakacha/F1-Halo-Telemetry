@@ -556,7 +556,7 @@ impl App {
         self.panel.result(if visible {
             "HUDs shown according to individual visibility settings."
         } else {
-            "HUDs hidden. Telemetry continues; use the hotkey or double-press Select to show them."
+            "HUDs hidden. Telemetry continues; use the hotkey or double-press the controller shortcut to show them."
         });
         Ok(())
     }

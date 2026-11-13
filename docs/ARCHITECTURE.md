@@ -101,12 +101,13 @@ un conflitto conserva entrambe le combinazioni precedenti. Il comando globale di
 visibilità applica un filtro ai layout senza sovrascrivere le preferenze salvate;
 quando il filtro nasconde gli HUD non vengono effettuati draw o Present.
 
-`input/rear_view` legge stick destro e Share/Create di DualSense e DualShock 4
+`input/rear_view` legge stick destro, touchpad DualSense e Share DualShock 4
 tramite Raw Input HID USB/Bluetooth, con fallback XInput per Xbox e i pad
 virtuali Steam Input. Il pannello registra joystick/gamepad con INPUTSINK e
 DEVNOTIFY: l'input del gioco non viene consumato. I report vengono letti durante
 WM_INPUT, prima di DefWindowProc; vengono accettati soltanto vendor/prodotto Sony
-e formati di lunghezza nota. La coda UI conserva assi, Select e identificatore dispositivo,
+e formati di lunghezza nota. La coda UI conserva assi, pulsante, ammissibilità
+del clic e identificatore dispositivo,
 senza riferimenti ai buffer Windows. La rimozione invalida subito il campione.
 
 La pressione verso il basso, a destra o a sinistra si attiva al 55% e si rilascia
@@ -119,8 +120,22 @@ Con controller presente il timer ricontrolla al massimo ogni 16 ms, anche con
 entrambi gli HUD nascosti, per rilevare rilasci e pressioni. La scansione degli slot XInput assenti
 avviene al massimo una volta al secondo.
 
-Due fronti di pressione Select entro 400 ms alternano la visibilità globale.
-Su XInput viene letto Back/View; su HID Sony Share/Create, distinto dal touchpad.
+Due fronti di pressione entro 400 ms alternano la visibilità globale.
+Su XInput viene letto Back/View; su DualShock 4 Share; su DualSense il clic
+fisico del touchpad con almeno un contatto attivo nella metà sinistra
+(`x < 960`, superficie 1920 × 1080). Il contatto può occupare uno dei due slot.
+La posizione viene verificata soltanto all'inizio del clic: trascinare il dito
+mentre il pulsante resta premuto non crea altre pressioni. Un clic non ammesso
+interrompe la sequenza. Create non viene usato dal decoder DualSense.
+
+I report DualSense USB `0x01/64` e Bluetooth `0x31/78` contengono pulsante e
+coordinate. I report semplici `0x01/10` e `0x01/78` conservano gli assi ma non
+possono attivare il comando, perché mancano le coordinate. Al primo rilevamento
+di un DualSense l'app apre temporaneamente il device con accesso condiviso e
+legge la feature seriale `0x09`, che abilita i report Bluetooth completi secondo
+il protocollo SDL. L'handle viene chiuso subito; coordinate assenti o non valide
+non producono toggle. Un pad nascosto da un driver, esposto soltanto come XInput,
+non permette di distinguere le metà del touchpad.
 Ogni report di un batch HID viene elaborato per conservare anche pressioni e
 rilasci rapidi. Una pressione mantenuta non si ripete. Disconnessione, sorgente
 o controller diverso azzerano la sequenza; il primo stato con tasto già premuto
