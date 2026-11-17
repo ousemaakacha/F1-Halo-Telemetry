@@ -62,7 +62,7 @@ Offset relativi all'inizio del record vettura:
 | Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvest limit f32=50; networkPaused u8=58 |
 | Car Damage | wear[4] f32=0,4,8,12 |
 | Car Telemetry 2 | aeroMode u8=0; aeroAvailable u8=1; aeroDistance u16=2; overtakeAvailable u8=4; overtakeActive u8=5; overtakeDistance u16=6; regulations2026 u8=8 |
-| Lap Data | deltaToCarInFrontMSPart u16=14; deltaToCarInFrontMinutesPart u8=16; carPosition u8=32; currentLapNum u8=33; resultStatus u8=45 |
+| Lap Data | deltaToCarInFrontMSPart u16=14; deltaToCarInFrontMinutesPart u8=16; carPosition u8=32; currentLapNum u8=33; driverStatus u8=44; resultStatus u8=45 |
 
 Per il distacco posteriore si cerca nello stesso pacchetto la vettura attiva
 (`resultStatus == 2`) con `carPosition == posizioneLocale + 1`. L'intervallo è
@@ -81,7 +81,21 @@ massimo 100 record e 8 stint; conteggi, indici migliori e flag riservati sono
 validati. Il confronto storico resta disponibile nel modello dati; gli HUD
 mostrano il distacco posteriore da Lap Data, indipendente dalla validità del giro.
 
-Session usa gamePaused a offset corpo 14 e formula a offset corpo 8.
+Session usa sessionType a offset corpo 6, formula a offset corpo 8,
+gamePaused a offset corpo 14 e isSpectating a offset corpo 15.
+La visibilità automatica richiede sessionType 1–18 (prove libere, qualifiche,
+Sprint Shootout, gare e Time Trial), nessuna pausa/spettatore, resultStatus 2 e
+driverStatus 1–4 della vettura locale. driverStatus 0 indica il garage;
+valori maggiori di 4 e booleani diversi da 0/1 vengono respinti.
+Session scade dopo 2 s (invio documentato 2 Hz), Lap Data e Car Telemetry dopo
+500 ms. Dati assenti, scaduti, cambio UID, riavvio, flashback e Session End
+non mantengono visibili gli HUD. Il controllo non usa la velocità.
+I flag di pausa UDP sono documentati per il gioco in rete: quando il gioco
+offline sospende l'invio nei menu, la scadenza dei dati nasconde gli HUD.
+Demo ed Edit Mode bypassano il rilevamento della sessione; visibilità manuale
+globale, preferenze dei singoli HUD e occultamento Halo per visuale restano
+maschere indipendenti. Lo stato automatico non viene salvato nelle preferenze.
+
 Il carburante usa direttamente `m_fuelRemainingLaps`, il valore del MFD:
 non viene sottratta di nuovo la distanza gara. Sono ammessi valori negativi
 finiti. Straight Mode usa prima `activeAeroMode` per **SM ON**, poi

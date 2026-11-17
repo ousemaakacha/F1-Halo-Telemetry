@@ -1,3 +1,4 @@
+mod carbon;
 mod classic;
 mod modern;
 
@@ -160,6 +161,7 @@ fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
 }
 
 pub struct Halo {
+    carbon: carbon::Carbon,
     classic: classic::Classic,
     modern: modern::Modern,
     ribbon: ID2D1PathGeometry,
@@ -180,6 +182,7 @@ pub struct Halo {
 impl Halo {
     pub fn new(factory: &ID2D1Factory1) -> Result<Self> {
         Ok(Self {
+            carbon: carbon::Carbon::new(factory)?,
             classic: classic::Classic::new(factory)?,
             modern: modern::Modern::new(factory)?,
             ribbon: halo_path(factory, 0.0, 875.0, -82.0, Some((20.0, 825.0, -3.0)))?,
@@ -226,9 +229,13 @@ impl Halo {
         edit: bool,
         now: Instant,
     ) {
-        p.translated((CONTENT_PADDING, 0.0), |p| {
-            self.draw_content(p, snapshot, settings, now);
-        });
+        if settings.halo_model == HaloModel::Carbon {
+            self.carbon.draw(p, snapshot, settings, now);
+        } else {
+            p.translated((CONTENT_PADDING, 0.0), |p| {
+                self.draw_content(p, snapshot, settings, now);
+            });
+        }
         if edit {
             super::edit_frame(p, WIDTH, HEIGHT, settings.colours.accent);
         }
@@ -838,8 +845,11 @@ mod tests {
             assert!(current_aero(&changed, now).is_none());
         }
         changed = snapshot;
-        changed.session_paused = Some(Timed {
-            value: true,
+        changed.session = Some(Timed {
+            value: SessionData {
+                paused: true,
+                ..SessionData::default()
+            },
             received: now,
             overall_frame: 1,
         });

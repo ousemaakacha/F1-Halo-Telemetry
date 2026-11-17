@@ -1,5 +1,107 @@
 # Local verification
 
+## Istanza unica e avvii ripetuti — 17 novembre 2026
+
+Un mutex Windows viene acquisito prima di caricare le impostazioni o creare
+finestre, renderer e ricevitore UDP. Gli avvii successivi terminano con successo
+e richiamano il pannello esistente, ripristinandolo se nascosto o minimizzato.
+La chiusura dell'handle libera il blocco; Windows lo libera anche se il processo
+viene terminato forzatamente. Nessun file di blocco o nuova dipendenza.
+
+Passati **91 test** (50 unit, 5 game data, 33 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release con `--locked`.
+Le [8 verifiche native](../artifacts/single-instance-smoke.json) includono
+sei riavvii rapidi, otto avvii simultanei, pannello nascosto/minimizzato,
+conservazione della massimizzazione e ripartenza dopo uscita normale o forzata.
+Rimangono un solo processo e due overlay; le impostazioni non cambiano.
+La Demo presenta frame senza errori. Nessuna nuova sessione reale nel gioco.
+
+## Scritte e indicatori lungo la curva Carbon — 17 novembre 2026
+
+I testi delle ali usano percorsi campionati dai due bordi della fascia; ogni
+lettera è orientata secondo la tangente locale. Fuel, Straight Mode, pedali,
+RPM e Behind non dipendono più da inclinazioni manuali dei singoli blocchi.
+Barre pedali e LED seguono lo stesso arco, con separatori perpendicolari.
+I percorsi sono memorizzati alla creazione delle risorse, senza ricostruirli
+a ogni frame. Il quadrante centrale conserva la lettura orizzontale.
+
+Passati **90 test** (49 unit, 5 game data, 33 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release. I due nuovi controlli
+verificano la corrispondenza con i bordi Bézier, la simmetria delle tangenti,
+la distanza delle righe e la continuità dei segmenti. Controllata
+l'[anteprima Direct2D](../artifacts/carbon-curved-text-preview.png) con dati
+simulati; nessuna nuova sessione nel gioco.
+Lo [smoke test Demo](../artifacts/carbon-curved-text-smoke.json) di 2 secondi
+ha presentato 108 frame senza errori di rendering.
+
+## Taglio simmetrico delle estremità Carbon — 17 novembre 2026
+
+Accorciate le estremità seguendo i due tagli indicati dall'utente. I punti di
+taglio superiori sono a X 32/968 e quelli inferiori a X 20/980 sul canvas di
+1000 unità: i due lati sono speculari rispetto a X 500. Le curve sono porzioni
+di quelle precedenti, senza spostare testi e quadrante. Nessun bordo viene
+aggiunto lungo i tagli. Verificati build Release, formattazione e
+[anteprima nativa Direct2D](../artifacts/carbon-symmetric-cut-preview.png)
+con dati simulati; nessuna nuova sessione nel gioco.
+
+## Profilo Carbon con estremità aperte — 17 novembre 2026
+
+Ridisegnato il profilo superiore seguendo le guide rosse dell'utente, eliminando
+il raccordo precedente vicino al quadrante. Bordo superiore argento e inferiore
+rosso proseguono separatamente fino ai lati; le chiusure del riempimento sono
+esterne al canvas e non vengono tracciate. Testi, spaziatura e telemetria sono
+conservati. Verificata l'[anteprima Direct2D](../artifacts/carbon-open-edges-preview.png),
+88 test, Clippy e build Release. La verifica visiva usa dati simulati.
+
+## Spaziatura delle ali Carbon — 17 novembre 2026
+
+Ampliata simmetricamente la fascia nelle due zone esterne indicate dall'utente,
+Straight Mode e Behind: maggiore distanza tra profilo superiore e bordo rosso,
+circa il 45% in più nell'area dei testi. Aumentata di 11 unità la separazione
+tra le due righe, senza ridurre i caratteri o spostare il quadrante.
+Il riempimento segue i nuovi bordi; i separatori esterni sono stati allungati.
+Canvas, scala, posizione, pneumatici e automatismo di visibilità conservati.
+Verificata l'[anteprima nativa Direct2D](../artifacts/carbon-spacing-preview.png)
+con gli stessi valori del riferimento. Passati 88 test, rustfmt e Clippy;
+rigenerati eseguibile e pacchetto portabile.
+
+## Carbon coordinato e visibilità automatica — 17 novembre 2026
+
+Aggiunto **Carbon (Halo + Tyres)** al selettore esistente. Una sola scelta
+aggiorna entrambi gli overlay; Wide, Classic e modern mantengono il pannello
+gomme precedente. Controllati nell'app Windows il cambio modern → Carbon,
+il salvataggio del modello e la conservazione di posizione, scala e opacità.
+Verificati visivamente tipografia corsiva, indicatori, bordo rosso, trama
+carbonio e monoposto RGBA. Corrette in verifica le distanze dal bordo di
+pedali/RPM e la larghezza di SM READY. Asset e prompt in [CARBON.md](CARBON.md).
+
+La visibilità automatica è attiva con tutti i modelli, include le prove libere
+e non modifica il file delle preferenze durante i passaggi pista/menu.
+Il riquadro Session indica se gli HUD attendono la pista o sono nascosti
+manualmente. Demo ed Edit rimangono utilizzabili senza il gioco.
+
+Passati **88 test** (47 unit, 5 game data, 33 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release con `--locked`.
+Le fixture indipendenti verificano i campi Session e Lap Data della vettura
+locale, booleani/driverStatus invalidi, tutti i tipi sessione 1–18 e tutti gli
+stati pilota in pista, garage, pausa, spettatore, risultati, dati assenti e
+scaduti, interruzione dell'invio, ripresa e Session Start/End.
+
+[17 prove native con UDP sintetico](../artifacts/carbon-auto-visibility.json)
+hanno verificato lo stato effettivo `IsWindowVisible` di entrambi gli HUD:
+attesa, prove libere, qualifiche, Sprint Shootout, gara, Time Trial, pausa,
+garage, spettatore, fine sessione, ritiro, Lap Data o Car Telemetry scaduti,
+interruzione UDP, ripresa dalla pausa, uscita dal garage e Halo disabilitato
+individualmente. Nessun errore di presentazione; in attesa zero frame
+renderizzati. I file impostazioni sono rimasti identici durante le prove.
+
+[Tre prove delle modalità](../artifacts/carbon-modes-smoke.json) confermano
+Demo, Edit senza gioco e Carbon con fondo 0% dopo ricreazione del device:
+entrambi gli HUD visibili e zero errori di presentazione.
+Le prove usano dati sintetici e non comprendono una sessione reale di F1 25.
+I flag UDP di pausa sono documentati per la rete; la sospensione dell'invio
+offline viene gestita tramite scadenza dei dati, senza interrogare la UI del gioco.
+
 ## PS5: doppio clic sulla metà sinistra del touchpad — 13 novembre 2026
 
 Il DualSense usa ora il clic fisico del touchpad con un contatto attivo a

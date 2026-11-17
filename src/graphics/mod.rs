@@ -111,9 +111,16 @@ pub enum Font {
     TyreTitle,
     TyreLabel,
     TyreWear,
+    CarbonLabel,
+    CarbonValue,
+    CarbonSpeed,
+    CarbonGear,
+    CarbonTitle,
+    CarbonWear,
+    CarbonTemperature,
 }
 
-const FONT_COUNT: usize = 15;
+const FONT_COUNT: usize = 22;
 
 impl Font {
     fn index(self) -> usize {
@@ -191,6 +198,21 @@ impl Graphics {
             };
             let gear_format = centered(102.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?;
             let hud = |size| centered(size, DWRITE_FONT_WEIGHT_BOLD, true);
+            let carbon = |size| -> Result<IDWriteTextFormat> {
+                let font = write.CreateTextFormat(
+                    w!("Arial"),
+                    None,
+                    DWRITE_FONT_WEIGHT_BOLD,
+                    DWRITE_FONT_STYLE_ITALIC,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    size,
+                    w!("en-GB"),
+                )?;
+                font.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+                font.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+                font.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+                Ok(font)
+            };
             let formats = [
                 make(11.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, false)?,
                 make(14.0, DWRITE_FONT_WEIGHT_MEDIUM, false)?,
@@ -207,6 +229,13 @@ impl Graphics {
                 make(18.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, false)?,
                 centered(14.0, DWRITE_FONT_WEIGHT_MEDIUM, false)?,
                 centered(31.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?,
+                carbon(11.0)?,
+                carbon(22.0)?,
+                carbon(56.0)?,
+                carbon(30.0)?,
+                carbon(30.0)?,
+                carbon(36.0)?,
+                carbon(16.0)?,
             ];
             // Cache advances once instead of measuring curved glyphs every frame.
             let ascii: [u16; 95] = std::array::from_fn(|i| i as u16 + 32);
@@ -277,7 +306,16 @@ impl Graphics {
             target.SetRoot(&visual)?;
             self.composition.Commit()?;
             let brush = context.CreateSolidColorBrush(&colour(WHITE, 1.0), None)?;
-            let material = material_brush(&context)?;
+            let material = material_brush(
+                &context,
+                [[36, 42, 49], [23, 29, 36], [12, 17, 23]],
+                (65.0, 255.0),
+            )?;
+            let carbon = material_brush(
+                &context,
+                [[30, 31, 33], [13, 14, 16], [7, 8, 10]],
+                (0.0, 370.0),
+            )?;
             Ok(Surface {
                 chain,
                 context,
@@ -286,6 +324,7 @@ impl Graphics {
                 _visual: visual,
                 brush,
                 material,
+                carbon,
                 formats: self.formats.clone(),
                 advances: self.advances,
                 width,
@@ -346,22 +385,26 @@ unsafe fn target_bitmap(
     }
 }
 
-fn material_brush(context: &ID2D1DeviceContext) -> Result<ID2D1LinearGradientBrush> {
+fn material_brush(
+    context: &ID2D1DeviceContext,
+    palette: [[u8; 3]; 3],
+    range: (f32, f32),
+) -> Result<ID2D1LinearGradientBrush> {
     unsafe {
         let target: ID2D1RenderTarget = context.cast()?;
         let stops = target.CreateGradientStopCollection(
             &[
                 D2D1_GRADIENT_STOP {
                     position: 0.0,
-                    color: colour([36, 42, 49], 0.98),
+                    color: colour(palette[0], 0.98),
                 },
                 D2D1_GRADIENT_STOP {
                     position: 0.48,
-                    color: colour([23, 29, 36], 0.98),
+                    color: colour(palette[1], 0.98),
                 },
                 D2D1_GRADIENT_STOP {
                     position: 1.0,
-                    color: colour([12, 17, 23], 0.98),
+                    color: colour(palette[2], 0.98),
                 },
             ],
             D2D1_GAMMA_2_2,
@@ -369,8 +412,8 @@ fn material_brush(context: &ID2D1DeviceContext) -> Result<ID2D1LinearGradientBru
         )?;
         context.CreateLinearGradientBrush(
             &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
-                startPoint: Vector2 { X: 0.0, Y: 65.0 },
-                endPoint: Vector2 { X: 0.0, Y: 255.0 },
+                startPoint: Vector2 { X: 0.0, Y: range.0 },
+                endPoint: Vector2 { X: 0.0, Y: range.1 },
             },
             None,
             &stops,
@@ -386,6 +429,7 @@ pub struct Surface {
     _visual: IDCompositionVisual,
     brush: ID2D1SolidColorBrush,
     material: ID2D1LinearGradientBrush,
+    carbon: ID2D1LinearGradientBrush,
     formats: [IDWriteTextFormat; FONT_COUNT],
     advances: [[f32; 95]; FONT_COUNT],
     pub width: u32,
@@ -434,6 +478,7 @@ impl Surface {
             context: &self.context,
             brush: &self.brush,
             material: &self.material,
+            carbon: &self.carbon,
             formats: &self.formats,
             advances: &self.advances,
         })
@@ -454,6 +499,7 @@ pub struct Painter<'a> {
     context: &'a ID2D1DeviceContext,
     brush: &'a ID2D1SolidColorBrush,
     material: &'a ID2D1LinearGradientBrush,
+    carbon: &'a ID2D1LinearGradientBrush,
     formats: &'a [IDWriteTextFormat; FONT_COUNT],
     advances: &'a [[f32; 95]; FONT_COUNT],
 }
@@ -476,6 +522,13 @@ impl Painter<'_> {
         unsafe {
             self.material.SetOpacity(opacity);
             self.context.FillGeometry(geometry, self.material, None);
+        }
+    }
+
+    pub fn carbon_geometry(&self, geometry: &ID2D1PathGeometry, opacity: f32) {
+        unsafe {
+            self.carbon.SetOpacity(opacity);
+            self.context.FillGeometry(geometry, self.carbon, None);
         }
     }
     fn brush(&self, rgb: [u8; 3], opacity: f32) {

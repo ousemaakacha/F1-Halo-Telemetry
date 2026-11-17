@@ -62,6 +62,188 @@ fn lap_wire(player: u8, frame: u32, position: u8, behind: Option<(u8, u32)>) -> 
     bytes
 }
 
+fn track_state(now: Instant, player: u8, session_type: u8, driver_status: u8) -> TelemetryState {
+    let mut session = wire(1, player, 60);
+    session[29 + 6] = session_type;
+    session[29 + 8] = 13;
+    let mut lap = lap_wire(player, 60, 1, None);
+    lap[29 + 57 * player as usize + 44] = driver_status;
+    let mut state = TelemetryState::default();
+    for bytes in [session, lap, wire(6, player, 60)] {
+        assert!(state.apply(parse(&bytes).unwrap(), now));
+    }
+    state
+}
+
+#[test]
+fn visibility_reads_session_and_local_driver_fields_and_validates_booleans() {
+    for player in [0, 23] {
+        let mut session = wire(1, player, 60);
+        session[35] = 18;
+        session[37] = 13;
+        session[43] = 1;
+        session[44] = 1;
+        let Packet::Session(_, data) = parse(&session).unwrap() else {
+            panic!()
+        };
+        assert_eq!(
+            data,
+            SessionData {
+                paused: true,
+                formula: 13,
+                session_type: 18,
+                spectating: true
+            }
+        );
+        for (offset, field) in [(43, "gamePaused"), (44, "isSpectating")] {
+            let mut invalid = session.clone();
+            invalid[offset] = 2;
+            assert_eq!(parse(&invalid), Err(ParseError::InvalidValue(field)));
+        }
+        let mut lap = lap_wire(player, 60, 1, None);
+        lap[29 + 57 * ((player as usize + 1) % 24) + 44] = 255;
+        lap[29 + 57 * player as usize + 44] = 3;
+        let Packet::Lap(_, data) = parse(&lap).unwrap() else {
+            panic!()
+        };
+        assert_eq!(data.driver_status, 3);
+        lap[29 + 57 * player as usize + 44] = 5;
+        assert_eq!(parse(&lap), Err(ParseError::InvalidValue("driverStatus")));
+    }
+}
+
+#[test]
+fn automatic_visibility_accepts_practice_qualifying_sprints_races_and_time_trial() {
+    let now = Instant::now();
+    for player in [0, 23] {
+        for session in 1..=18 {
+            for driver in 1..=4 {
+                assert!(
+                    track_state(now, player, session, driver)
+                        .snapshot
+                        .on_track(now)
+                );
+            }
+        }
+    }
+    assert!(!Snapshot::default().on_track(now));
+    for session in [0, 19, 255] {
+        assert!(!track_state(now, 23, session, 4).snapshot.on_track(now));
+    }
+    assert!(!track_state(now, 23, 18, 0).snapshot.on_track(now));
+}
+
+#[test]
+fn automatic_visibility_hides_for_pause_spectating_garage_results_and_missing_packets() {
+    let now = Instant::now();
+    let snapshot = track_state(now, 23, 15, 4).snapshot;
+    let mut variants = Vec::new();
+    let mut changed = snapshot;
+    changed.session.as_mut().unwrap().value.paused = true;
+    variants.push(changed);
+    changed = snapshot;
+    changed.session.as_mut().unwrap().value.spectating = true;
+    variants.push(changed);
+    changed = snapshot;
+    changed.driver_status.as_mut().unwrap().value = 0;
+    variants.push(changed);
+    changed = snapshot;
+    changed.status = Some(Timed {
+        value: CarStatus {
+            paused: true,
+            ..CarStatus::default()
+        },
+        received: now,
+        overall_frame: 60,
+    });
+    variants.push(changed);
+    for result in [0, 1, 3, 4, 5, 6, 7] {
+        changed = snapshot;
+        changed.lap_status.as_mut().unwrap().value = result;
+        variants.push(changed);
+    }
+    for missing in 0..4 {
+        changed = snapshot;
+        match missing {
+            0 => changed.telemetry = None,
+            1 => changed.session = None,
+            2 => changed.lap_status = None,
+            _ => changed.driver_status = None,
+        }
+        variants.push(changed);
+    }
+    for source in [Connection::Unsupported, Connection::BindError] {
+        changed = snapshot;
+        changed.source = source;
+        variants.push(changed);
+    }
+    for snapshot in variants {
+        assert!(!snapshot.on_track(now), "{snapshot:?}");
+    }
+}
+
+#[test]
+fn automatic_visibility_expires_packet_families_and_recovers_after_menus_and_session_end() {
+    let now = Instant::now();
+    let mut state = track_state(now, 23, 18, 4);
+    assert!(
+        !state
+            .snapshot
+            .on_track(now + FAST_TTL + Duration::from_millis(1))
+    );
+    let later = now + Duration::from_millis(600);
+    state.apply(parse(&wire(6, 23, 100)).unwrap(), later);
+    assert!(!state.snapshot.on_track(later));
+    let mut lap = lap_wire(23, 100, 1, None);
+    lap[29 + 57 * 23 + 44] = 4;
+    state.apply(parse(&lap).unwrap(), later);
+    assert!(
+        state.snapshot.on_track(later),
+        "2 Hz Session stays fresh between telemetry packets"
+    );
+    let later = now + DAMAGE_TTL + Duration::from_millis(1);
+    state.apply(parse(&wire(6, 23, 200)).unwrap(), later);
+    lap[19..23].copy_from_slice(&200u32.to_le_bytes());
+    lap[23..27].copy_from_slice(&200u32.to_le_bytes());
+    lap[15..19].copy_from_slice(&(200f32 / 60.0).to_le_bytes());
+    state.apply(parse(&lap).unwrap(), later);
+    assert!(
+        !state.snapshot.on_track(later),
+        "Fresh telemetry cannot keep stale session metadata visible"
+    );
+    let mut session = wire(1, 23, 200);
+    session[35] = 18;
+    state.apply(parse(&session).unwrap(), later);
+    assert!(state.snapshot.on_track(later));
+    let mut event = wire(3, 23, 201);
+    event[29..33].copy_from_slice(b"SEND");
+    state.apply(parse(&event).unwrap(), later);
+    assert!(!state.snapshot.on_track(later));
+    assert!(state.snapshot.session.is_none());
+    assert!(state.snapshot.driver_status.is_none());
+    event = wire(3, 23, 202);
+    event[29..33].copy_from_slice(b"SSTA");
+    state.apply(parse(&event).unwrap(), later);
+    assert!(!state.snapshot.on_track(later));
+    for mut bytes in [
+        wire(1, 23, 203),
+        lap_wire(23, 203, 1, None),
+        wire(6, 23, 203),
+    ] {
+        match bytes[6] {
+            1 => bytes[35] = 18,
+            2 => bytes[29 + 57 * 23 + 44] = 4,
+            _ => (),
+        }
+        state.apply(parse(&bytes).unwrap(), later);
+    }
+    assert!(state.snapshot.on_track(later));
+    let mut changed_session = wire(6, 23, 1);
+    changed_session[7..15].copy_from_slice(&43u64.to_le_bytes());
+    state.apply(parse(&changed_session).unwrap(), later);
+    assert!(!state.snapshot.on_track(later));
+}
+
 #[test]
 fn rear_gap_reads_the_following_race_position_not_array_order_or_our_front_gap() {
     for (player, behind) in [(0, 23), (23, 0), (10, 4)] {

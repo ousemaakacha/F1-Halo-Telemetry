@@ -15,8 +15,17 @@ pub const LAP_SIZE: usize = 1399;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LapData {
     pub result_status: u8,
+    pub driver_status: u8,
     pub current_lap: u8,
     pub gap_behind_ms: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SessionData {
+    pub paused: bool,
+    pub formula: u8,
+    pub session_type: u8,
+    pub spectating: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -90,7 +99,7 @@ pub enum Packet {
     Status(Header, CarStatus),
     Damage(Header, Damage),
     Aero(Header, Aero),
-    Session(Header, bool, u8),
+    Session(Header, SessionData),
     Lap(Header, LapData),
     History(Header, LapHistory),
     Participants(Header, u8),
@@ -105,7 +114,7 @@ impl Packet {
             | Self::Status(h, _)
             | Self::Damage(h, _)
             | Self::Aero(h, _)
-            | Self::Session(h, _, _)
+            | Self::Session(h, _)
             | Self::Lap(h, _)
             | Self::History(h, _)
             | Self::Participants(h, _)
@@ -304,13 +313,21 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
         }
         1 => Packet::Session(
             h,
-            boolean(b[HEADER_SIZE + 14], "gamePaused")?,
-            b[HEADER_SIZE + 8],
+            SessionData {
+                paused: boolean(b[HEADER_SIZE + 14], "gamePaused")?,
+                formula: b[HEADER_SIZE + 8],
+                session_type: b[HEADER_SIZE + 6],
+                spectating: boolean(b[HEADER_SIZE + 15], "isSpectating")?,
+            },
         ),
         2 => {
             let cars = &b[HEADER_SIZE..HEADER_SIZE + 57 * CAR_COUNT];
             let car = &cars[57 * index..][..57];
             let result = car[45];
+            let driver_status = car[44];
+            if driver_status > 4 {
+                return Err(ParseError::InvalidValue("driverStatus"));
+            }
             if result > 7 {
                 return Err(ParseError::InvalidValue("resultStatus"));
             }
@@ -336,6 +353,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
                 h,
                 LapData {
                     result_status: result,
+                    driver_status,
                     current_lap: car[33],
                     gap_behind_ms,
                 },

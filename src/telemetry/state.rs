@@ -1,4 +1,6 @@
-use super::{Aero, CarStatus, CarTelemetry, Damage, ErsCapacity, Header, LapHistory, Packet};
+use super::{
+    Aero, CarStatus, CarTelemetry, Damage, ErsCapacity, Header, LapHistory, Packet, SessionData,
+};
 use std::time::{Duration, Instant};
 
 pub const FAST_TTL: Duration = Duration::from_millis(500);
@@ -71,10 +73,11 @@ pub struct Snapshot {
     pub damage: Option<Timed<Damage>>,
     pub aero: Option<Timed<Aero>>,
     pub lap_status: Option<Timed<u8>>,
+    pub driver_status: Option<Timed<u8>>,
     pub current_lap: Option<Timed<u8>>,
     pub lap_history: Option<Timed<LapHistory>>,
     pub gap_behind: Option<Timed<u32>>,
-    pub session_paused: Option<Timed<bool>>,
+    pub session: Option<Timed<SessionData>>,
     pub formula: Option<u8>,
     pub participants: Option<u8>,
     pub source: Connection,
@@ -101,8 +104,8 @@ impl Snapshot {
             return Connection::Inactive;
         }
         if self
-            .session_paused
-            .is_some_and(|s| s.fresh(now, DAMAGE_TTL) && s.value)
+            .session
+            .is_some_and(|s| s.fresh(now, DAMAGE_TTL) && s.value.paused)
             || self
                 .status
                 .is_some_and(|s| s.fresh(now, FAST_TTL) && s.value.paused)
@@ -118,6 +121,22 @@ impl Snapshot {
 
     pub fn driving(&self, now: Instant) -> bool {
         matches!(self.connection(now), Connection::Live | Connection::Demo)
+    }
+
+    pub fn on_track(&self, now: Instant) -> bool {
+        self.driving(now)
+            && self.session.is_some_and(|s| {
+                s.fresh(now, DAMAGE_TTL)
+                    && (1..=18).contains(&s.value.session_type)
+                    && !s.value.paused
+                    && !s.value.spectating
+            })
+            && self
+                .lap_status
+                .is_some_and(|s| s.fresh(now, FAST_TTL) && s.value == 2)
+            && self
+                .driver_status
+                .is_some_and(|s| s.fresh(now, FAST_TTL) && (1..=4).contains(&s.value))
     }
 
     pub fn lap_delta_ms(&self, now: Instant) -> Option<i64> {
@@ -174,10 +193,11 @@ impl TelemetryState {
         self.snapshot.damage = None;
         self.snapshot.aero = None;
         self.snapshot.lap_status = None;
+        self.snapshot.driver_status = None;
         self.snapshot.current_lap = None;
         self.snapshot.lap_history = None;
         self.snapshot.gap_behind = None;
-        self.snapshot.session_paused = None;
+        self.snapshot.session = None;
         self.snapshot.formula = None;
         self.snapshot.participants = None;
         self.sequence = [None; 17];
@@ -279,12 +299,13 @@ impl TelemetryState {
             Packet::Status(_, v) => self.snapshot.status = timed!(v),
             Packet::Damage(_, v) => self.snapshot.damage = timed!(v),
             Packet::Aero(_, v) => self.snapshot.aero = timed!(v),
-            Packet::Session(_, paused, formula) => {
-                self.snapshot.session_paused = timed!(paused);
-                self.snapshot.formula = Some(formula);
+            Packet::Session(_, session) => {
+                self.snapshot.session = timed!(session);
+                self.snapshot.formula = Some(session.formula);
             }
             Packet::Lap(_, lap) if !self.ended => {
                 self.snapshot.lap_status = timed!(lap.result_status);
+                self.snapshot.driver_status = timed!(lap.driver_status);
                 self.snapshot.current_lap = timed!(lap.current_lap);
                 self.snapshot.gap_behind = lap.gap_behind_ms.map(|gap| Timed {
                     value: gap,

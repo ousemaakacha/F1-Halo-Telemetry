@@ -1,3 +1,4 @@
+mod instance;
 mod panel;
 
 use crate::{
@@ -22,7 +23,6 @@ use std::{
 use windows::{
     Win32::{
         Foundation::*,
-        Graphics::Direct2D::ID2D1Bitmap1,
         System::{Com::*, ProcessStatus::*, Threading::*},
         UI::{HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
@@ -90,6 +90,13 @@ impl Drop for ComApartment {
 }
 
 pub fn run(options: Options) -> Result<(), String> {
+    let Some(_instance) =
+        instance::SingleInstance::acquire(w!("Local\\F1HaloTelemetry.SingleInstance"))
+            .map_err(|e| e.to_string())?
+    else {
+        panel::Panel::show_existing();
+        return Ok(());
+    };
     // SAFETY: DPI mode is set before creating any HWND. ERROR_ACCESS_DENIED is
     // harmless if a manifest or the host has already selected per-monitor mode.
     unsafe {
@@ -111,8 +118,20 @@ pub fn run(options: Options) -> Result<(), String> {
     Overlay::register().map_err(|e| e.to_string())?;
     let panel = panel::Panel::new().map_err(|e| e.to_string())?;
     let overlays = [
-        Overlay::new(0, settings.halo).map_err(|e| e.to_string())?,
-        Overlay::new(1, settings.tyres).map_err(|e| e.to_string())?,
+        Overlay::new(
+            0,
+            settings
+                .halo
+                .with_global_visibility(options.demo || options.edit),
+        )
+        .map_err(|e| e.to_string())?,
+        Overlay::new(
+            1,
+            settings
+                .tyres
+                .with_global_visibility(options.demo || options.edit),
+        )
+        .map_err(|e| e.to_string())?,
     ];
     settings.halo = overlays[0].layout(settings.halo);
     settings.tyres = overlays[1].layout(settings.tyres);
@@ -126,7 +145,7 @@ pub fn run(options: Options) -> Result<(), String> {
         graphics: None,
         surfaces: [None, None],
         halo: None,
-        tyre_car: None,
+        tyres: None,
         settings,
         config,
         receiver,
@@ -137,6 +156,7 @@ pub fn run(options: Options) -> Result<(), String> {
         demo: options.demo,
         edit: false,
         overlays_visible: true,
+        session_active: false,
         rear_hidden: false,
         rear_input: RearInput::default(),
         dirty: true,
@@ -215,7 +235,7 @@ struct App {
     graphics: Option<Graphics>,
     surfaces: [Option<Surface>; 2],
     halo: Option<Halo>,
-    tyre_car: Option<ID2D1Bitmap1>,
+    tyres: Option<hud::tyres::Tyres>,
     settings: Settings,
     config: PathBuf,
     receiver: Receiver,
@@ -226,6 +246,7 @@ struct App {
     demo: bool,
     edit: bool,
     overlays_visible: bool,
+    session_active: bool,
     rear_hidden: bool,
     rear_input: RearInput,
     dirty: bool,
@@ -253,13 +274,11 @@ impl App {
     fn create_graphics(&mut self) -> Result<(), String> {
         self.surfaces = [None, None];
         self.halo = None;
-        self.tyre_car = None;
+        self.tyres = None;
         self.graphics = None;
         let graphics = Graphics::new().map_err(|e| e.to_string())?;
         let halo = Halo::new(&graphics.geometry_factory).map_err(|e| e.to_string())?;
-        let tyre_car = graphics
-            .bitmap(include_bytes!("../../assets/tyre-car-transparent.png"))
-            .map_err(|e| e.to_string())?;
+        let tyres = hud::tyres::Tyres::new(&graphics).map_err(|e| e.to_string())?;
         for (index, overlay) in self.overlays.iter().enumerate() {
             let (width, height) = overlay.size();
             self.surfaces[index] = Some(
@@ -270,7 +289,7 @@ impl App {
         }
         self.graphics = Some(graphics);
         self.halo = Some(halo);
-        self.tyre_car = Some(tyre_car);
+        self.tyres = Some(tyres);
         self.graphics_error = None;
         self.dirty = true;
         Ok(())
@@ -333,6 +352,7 @@ impl App {
                 self.dirty = true;
             }
             let poll_controller = self.update_controller(now);
+            self.update_session_visibility(now)?;
             if self.graphics.is_none() && now >= self.graphics_retry {
                 match self.create_graphics() {
                     Ok(()) => self.diagnostics.device_recreations += 1,
@@ -344,7 +364,7 @@ impl App {
             }
             let visible = self
                 .settings
-                .effective_layouts(self.overlays_visible, self.rear_hidden)
+                .effective_layouts(self.huds_visible(), self.rear_hidden)
                 .iter()
                 .any(|layout| layout.visible);
             if self.dirty && visible && self.graphics.is_some() && now >= self.next_frame {
@@ -355,7 +375,7 @@ impl App {
                         self.graphics_error = Some(error);
                         self.surfaces = [None, None];
                         self.halo = None;
-                        self.tyre_car = None;
+                        self.tyres = None;
                         self.graphics = None;
                         self.graphics_retry = Instant::now() + Duration::from_millis(500);
                     }
@@ -438,7 +458,7 @@ impl App {
     }
 
     fn render(&mut self, now: Instant) -> Result<(), String> {
-        if !self.overlays_visible {
+        if !self.huds_visible() {
             return Ok(());
         }
         let start = Instant::now();
@@ -447,7 +467,7 @@ impl App {
         }
         let layouts = self
             .settings
-            .effective_layouts(self.overlays_visible, self.rear_hidden);
+            .effective_layouts(self.huds_visible(), self.rear_hidden);
         for (index, layout) in layouts.into_iter().enumerate() {
             if !layout.visible {
                 continue;
@@ -472,9 +492,8 @@ impl App {
                     now,
                 );
             } else {
-                hud::tyres::draw(
+                self.tyres.as_ref().unwrap().draw(
                     &painter,
-                    self.tyre_car.as_ref().unwrap(),
                     &self.snapshot,
                     &self.settings,
                     self.edit,
@@ -497,10 +516,26 @@ impl App {
         Ok(())
     }
 
+    fn huds_visible(&self) -> bool {
+        self.overlays_visible && (self.edit || self.demo || self.session_active)
+    }
+
+    fn update_session_visibility(&mut self, now: Instant) -> Result<(), String> {
+        let active = self.snapshot.on_track(now);
+        if active != self.session_active {
+            self.session_active = active;
+            self.apply_layouts()?;
+            self.dirty = true;
+            self.next_frame = now;
+            self.previous_live = false;
+        }
+        Ok(())
+    }
+
     fn apply_layouts(&self) -> Result<(), String> {
         for (overlay, layout) in self.overlays.iter().zip(
             self.settings
-                .effective_layouts(self.overlays_visible, self.rear_hidden),
+                .effective_layouts(self.huds_visible(), self.rear_hidden),
         ) {
             overlay
                 .apply_layout(layout)
@@ -525,9 +560,7 @@ impl App {
         if hidden != self.rear_hidden {
             let previous = self.rear_hidden;
             self.rear_hidden = hidden;
-            let layout = self
-                .settings
-                .effective_layouts(self.overlays_visible, hidden)[0];
+            let layout = self.settings.effective_layouts(self.huds_visible(), hidden)[0];
             if let Err(error) = self.overlays[0].apply_layout(layout) {
                 self.rear_hidden = previous;
                 self.panel.result(&format!("Halo visibility: {error}"));
@@ -554,7 +587,7 @@ impl App {
         self.next_frame = Instant::now();
         self.previous_live = false;
         self.panel.result(if visible {
-            "HUDs shown according to individual visibility settings."
+            "HUDs enabled: shown automatically on track, hidden in menus. Demo and Edit remain visible."
         } else {
             "HUDs hidden. Telemetry continues; use the hotkey or double-press the controller shortcut to show them."
         });
@@ -573,6 +606,7 @@ impl App {
             overlay.set_edit(edit).map_err(|e| e.to_string())?;
         }
         self.edit = edit;
+        self.apply_layouts()?;
         self.dirty = true;
         if !edit {
             let foreground = unsafe { GetForegroundWindow() };
@@ -622,7 +656,8 @@ impl App {
         let bindings =
             replace_window_hotkeys(self.panel.hwnd, self.hotkeys, [&text[0], &text[1]], || {
                 for (overlay, layout) in self.overlays.iter().zip(s.effective_layouts(
-                    self.overlays_visible,
+                    self.overlays_visible
+                        && (self.edit || demo || (!source_changed && self.session_active)),
                     self.rear_hidden && s.hide_halo_rear_view,
                 )) {
                     overlay
@@ -648,7 +683,7 @@ impl App {
                 for (index, (overlay, layout)) in self.overlays.iter().zip(old_layouts).enumerate()
                 {
                     let _ = overlay.apply_layout(layout.with_global_visibility(
-                        self.overlays_visible && !(index == 0 && self.rear_hidden),
+                        self.huds_visible() && !(index == 0 && self.rear_hidden),
                     ));
                 }
                 return Err(error);
@@ -658,6 +693,7 @@ impl App {
         self.demo = demo;
         if source_changed {
             self.snapshot = Snapshot::default();
+            self.session_active = false;
         }
         self.monitor_hz = overlay::monitor_refresh(self.overlays[0].hwnd);
         self.panel.populate_layout(&self.settings);
@@ -680,7 +716,7 @@ impl App {
         next.validate()?;
         let result = (|| {
             self.overlays[0]
-                .apply_layout(next.effective_layouts(self.overlays_visible, self.rear_hidden)[0])
+                .apply_layout(next.effective_layouts(self.huds_visible(), self.rear_hidden)[0])
                 .map_err(|error| error.to_string())?;
             next.halo = self.overlays[0].layout(next.halo);
             if save {
@@ -691,7 +727,7 @@ impl App {
         })();
         if let Err(error) = result {
             let _ = self.overlays[0].apply_layout(
-                old_layout.with_global_visibility(self.overlays_visible && !self.rear_hidden),
+                old_layout.with_global_visibility(self.huds_visible() && !self.rear_hidden),
             );
             return Err(error);
         }
@@ -826,9 +862,12 @@ impl App {
                     self.sync_layout()?;
                 }
                 panel::TOGGLE_DEMO => {
-                    self.demo = !self.demo;
-                    self.receiver.source(&self.settings, self.demo)?;
+                    let demo = !self.demo;
+                    self.receiver.source(&self.settings, demo)?;
+                    self.demo = demo;
                     self.snapshot = Snapshot::default();
+                    self.session_active = false;
+                    self.apply_layouts()?;
                     self.panel.check(panel::DEMO, self.demo);
                     self.dirty = true;
                 }
@@ -867,6 +906,17 @@ impl App {
             self.snapshot.connection(now).label(),
             self.usage.cpu,
             self.usage.memory,
+            if !self.overlays_visible {
+                "HUDs hidden manually"
+            } else if self.edit {
+                "HUDs: Edit Mode"
+            } else if self.demo {
+                "HUDs: Demo"
+            } else if self.session_active {
+                "HUDs: automatically on track"
+            } else {
+                "HUDs: waiting for track"
+            },
         );
         self.panel.battery_status(
             &self
@@ -913,7 +963,7 @@ impl App {
         }
         let c = self.snapshot.counters;
         let now = Instant::now();
-        let report = serde_json::json!({
+        let mut report = serde_json::json!({
             "application": crate::APPLICATION_NAME, "version": env!("CARGO_PKG_VERSION"),
             "halo_model": self.settings.halo_model,
             "active_halo_profile": self.settings.active_halo_profile,
@@ -968,6 +1018,12 @@ impl App {
                     "transparent_style": style & WS_EX_TRANSPARENT.0 != 0,
                     "topmost": style & WS_EX_TOPMOST.0 != 0, "visible": unsafe { IsWindowVisible(o.hwnd) }.as_bool(), "width": r.right-r.left, "height": r.bottom-r.top })
             }).collect::<Vec<_>>(),
+        });
+        report["automatic_visibility"] = serde_json::json!({
+            "session_active": self.session_active,
+            "session_type": self.snapshot.session.map(|s| s.value.session_type),
+            "spectating": self.snapshot.session.map(|s| s.value.spectating),
+            "driver_status": self.snapshot.driver_status.map(|s| s.value),
         });
         std::fs::write(
             path,

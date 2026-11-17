@@ -3,7 +3,7 @@ use super::protocol::*;
 
 pub const DEMO_ERS_CAPACITY: f32 = 4_000_000.0;
 
-pub fn sample(seconds: f32, frame: u32) -> [Packet; 6] {
+pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
     let phase = (seconds * 0.33).sin();
     let zone_seconds = seconds.rem_euclid(18.0);
     let speed = (190.0 + phase * 125.0).max(0.0);
@@ -83,8 +83,17 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 6] {
             Header { packet_id: 2, ..h },
             LapData {
                 result_status: 2,
+                driver_status: 4,
                 current_lap: 3,
                 gap_behind_ms: Some((1_800.0 + phase * 1_200.0).round() as u32),
+            },
+        ),
+        Packet::Session(
+            Header { packet_id: 1, ..h },
+            SessionData {
+                formula: 13,
+                session_type: 18,
+                ..SessionData::default()
             },
         ),
     ]
@@ -101,6 +110,7 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
         Packet::Aero(..) => AERO_SIZE,
         Packet::History(..) => HISTORY_SIZE,
         Packet::Lap(..) => LAP_SIZE,
+        Packet::Session(..) => 926,
         _ => return 0,
     };
     if buffer.len() < size {
@@ -120,10 +130,18 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
     b[23..27].copy_from_slice(&h.overall_frame.to_le_bytes());
     b[27] = h.player;
     b[28] = 255;
+    if let Packet::Session(_, session) = packet {
+        b[HEADER_SIZE + 6] = session.session_type;
+        b[HEADER_SIZE + 8] = session.formula;
+        b[HEADER_SIZE + 14] = session.paused as u8;
+        b[HEADER_SIZE + 15] = session.spectating as u8;
+        return size;
+    }
     if let Packet::Lap(_, lap) = packet {
         let offset = HEADER_SIZE + 57 * h.player as usize;
         b[offset + 32] = 1;
         b[offset + 33] = lap.current_lap;
+        b[offset + 44] = lap.driver_status;
         b[offset + 45] = lap.result_status;
         if let Some(gap) = lap.gap_behind_ms {
             if gap / 60_000 > u8::MAX as u32 {

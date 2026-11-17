@@ -1,17 +1,49 @@
 use crate::{
     graphics::{Font::*, *},
-    settings::{Settings, TyreMode},
+    settings::{HaloModel, Settings, TyreMode},
     telemetry::{
         state::{DAMAGE_TTL, FAST_TTL},
         *,
     },
 };
 use std::time::Instant;
-use windows::Win32::Graphics::Direct2D::ID2D1Bitmap1;
+use windows::{Win32::Graphics::Direct2D::ID2D1Bitmap1, core::Result};
 
 pub const WIDTH: f32 = 310.0;
 pub const HEIGHT: f32 = 370.0;
 const COLUMN_WIDTH: f32 = 82.0;
+
+pub struct Tyres {
+    car: ID2D1Bitmap1,
+    carbon: carbon::Carbon,
+}
+
+impl Tyres {
+    pub fn new(graphics: &Graphics) -> Result<Self> {
+        Ok(Self {
+            car: graphics.bitmap(include_bytes!("../../assets/tyre-car-transparent.png"))?,
+            carbon: carbon::Carbon::new(graphics)?,
+        })
+    }
+
+    pub fn draw(
+        &self,
+        p: &Painter<'_>,
+        snapshot: &Snapshot,
+        settings: &Settings,
+        edit: bool,
+        now: Instant,
+    ) {
+        if settings.halo_model == HaloModel::Carbon {
+            self.carbon.draw(p, snapshot, settings, now);
+            if edit {
+                super::edit_frame(p, WIDTH, HEIGHT, crate::hud::carbon::RED);
+            }
+        } else {
+            draw(p, &self.car, snapshot, settings, edit, now);
+        }
+    }
+}
 
 fn overall_wear(wear: Option<[f32; 4]>) -> Option<f32> {
     wear.map(|values| values.iter().sum::<f32>() / 4.0)
@@ -153,3 +185,4 @@ mod tests {
         assert_eq!(overall_wear(None), None);
     }
 }
+mod carbon;

@@ -66,6 +66,7 @@ const RESULT: u16 = 301;
 const CONNECTION_STATUS: u16 = 302;
 const RUNTIME_STATUS: u16 = 303;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
+const CLASS_NAME: PCWSTR = w!("F1HaloSettings");
 type PositionedControl = (HWND, Bounds, Option<Page>);
 
 fn layout_decimal(text: &str, current: f32, label: &str) -> std::result::Result<f32, String> {
@@ -118,7 +119,7 @@ impl Panel {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(panel_proc),
             hInstance: instance.into(),
-            lpszClassName: w!("F1HaloSettings"),
+            lpszClassName: CLASS_NAME,
             hCursor: unsafe { LoadCursorW(None, IDC_ARROW)? },
             hIcon: icons[0].0,
             hIconSm: icons[1].0,
@@ -155,7 +156,7 @@ impl Panel {
         let hwnd = unsafe {
             CreateWindowExW(
                 WS_EX_CONTROLPARENT,
-                w!("F1HaloSettings"),
+                CLASS_NAME,
                 w!("F1 Halo Telemetry · Settings"),
                 style,
                 work.left + (work.right - work.left - width) / 2,
@@ -502,6 +503,22 @@ impl Panel {
         true
     }
 
+    pub fn show_existing() {
+        unsafe {
+            if let Ok(hwnd) = FindWindowW(CLASS_NAME, None) {
+                let _ = ShowWindowAsync(
+                    hwnd,
+                    if IsIconic(hwnd).as_bool() {
+                        SW_RESTORE
+                    } else {
+                        SW_SHOW
+                    },
+                );
+                let _ = SetForegroundWindow(hwnd);
+            }
+        }
+    }
+
     pub fn show(&self) {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOW);
@@ -583,6 +600,7 @@ impl Panel {
                 HaloModel::Wide => 0,
                 HaloModel::Classic => 1,
                 HaloModel::Modern => 2,
+                HaloModel::Carbon => 3,
             },
         );
         self.select(
@@ -702,6 +720,7 @@ impl Panel {
             0 => HaloModel::Wide,
             1 => HaloModel::Classic,
             2 => HaloModel::Modern,
+            3 => HaloModel::Carbon,
             _ => return Err("Select a Halo model.".into()),
         };
         s.bind_ip = self.text(IP).trim().into();
@@ -778,12 +797,12 @@ impl Panel {
         self.set(BATTERY_STATUS, text);
     }
 
-    pub fn session_status(&self, connection: &str, cpu: f64, memory: u64) {
+    pub fn session_status(&self, connection: &str, cpu: f64, memory: u64, visibility: &str) {
         self.set(CONNECTION_STATUS, connection);
         self.set(
             RUNTIME_STATUS,
             &format!(
-                "CPU {cpu:.1}%  ·  RAM {:.1} MB",
+                "CPU {cpu:.1}%  ·  RAM {:.1} MB\n{visibility}",
                 memory as f64 / 1_048_576.0
             ),
         );

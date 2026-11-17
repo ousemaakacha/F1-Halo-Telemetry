@@ -9,7 +9,7 @@ const LOWER: [(f32, f32); 4] = [
     (738.0, 246.0),
 ];
 
-fn curve_point(points: &[(f32, f32); 4], t: f32) -> (f32, f32) {
+pub(super) fn curve_point(points: &[(f32, f32); 4], t: f32) -> (f32, f32) {
     let weights = [
         (1.0 - t).powi(3),
         3.0 * t * (1.0 - t).powi(2),

@@ -26,6 +26,8 @@ Windows da 16 a 256 px.
 Aprire `dist/F1-Halo-Telemetry/f1-halo-telemetry.exe`, oppure l'eseguibile in
 `target/release` dopo la compilazione. Il pannello impostazioni compare all'avvio.
 Se si è estratto il pacchetto portabile, l'eseguibile si trova accanto a questo README.
+È consentita una sola istanza per sessione Windows: un nuovo avvio richiama il
+pannello esistente senza duplicare gli overlay.
 L'applicazione ascolta UDP su `127.0.0.1:20777` e mostra uno stato di attesa finché
 non riceve dati validi. La casella **Demo (simulated data)**, seguita da **Apply and save**, permette di provare entrambi gli HUD senza il gioco.
 
@@ -68,6 +70,16 @@ combinazione precedente quando possibile.
 
 **Ctrl + Shift + O** mostra o nasconde entrambi gli HUD, anche durante il gioco.
 La scorciatoia è modificabile nel pannello e disponibile anche nel menu rapido.
+La visibilità durante il gioco è **automatica**: entrambi gli HUD compaiono
+quando la propria vettura è in pista in prove libere, qualifiche (anche Sprint),
+gara o Time Trial. Si nascondono nei menu, in pausa, nel garage, in modalità
+spettatore, a fine sessione e quando i dati smettono di arrivare. Non serve
+premere la scorciatoia a ogni cambio menu. Il rilevamento non dipende dalla
+velocità: gli HUD restano visibili anche con la vettura ferma in pista.
+Demo ed Edit Mode permettono di vedere e posizionare gli HUD anche senza gioco.
+Il comando manuale resta un interruttore generale: se lo disattivi, gli HUD
+restano nascosti anche quando torni in pista, finché lo riattivi.
+
 Il comando conserva posizione e preferenze di visibilità dei singoli HUD;
 alla riapertura dell'app la visibilità globale riparte attiva. Quando gli HUD
 sono nascosti la ricezione continua, mentre il rendering si arresta.
@@ -133,7 +145,16 @@ Aumenta il valore per ridurre la trasparenza del fondo, oppure usa **0%** per
 eliminarlo. Premi **Apply and save**. Le percentuali vengono ripristinate al
 riavvio; i file impostazioni precedenti restano compatibili.
 
-**Halo model** permette di scegliere **Wide**, **Classic** oppure **modern**.
+**Halo model** permette di scegliere **Wide**, **Classic**, **modern** oppure
+**Carbon (Halo + Tyres)**. Carbon applica insieme i due nuovi design: Halo ad
+arco con quadrante circolare, bordo rosso, trama carbonio e caratteri corsivi;
+pannello pneumatici coordinato con monoposto argento/nero/rosso, usura media,
+barre segmentate e temperature Surface/Inner. Tutti i valori sono live;
+la scelta viene salvata e si applica con **Apply and save** senza riavvio.
+Tornando agli altri modelli viene ripristinato anche il pannello gomme precedente.
+Il fondo grigio delle immagini di riferimento non viene mostrato sopra il gioco.
+Dettagli e asset: [design Carbon](docs/CARBON.md).
+
 Modern segue il nuovo riferimento: fascia antracite continua con gradiente,
 estremità arrotondate, bordo arancione, arco superiore sottile e quadrante più
 grande. Fuel, Straight Mode, distacco live da chi segue e marce restano integrati nella fascia.
