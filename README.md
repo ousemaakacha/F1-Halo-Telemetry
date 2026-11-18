@@ -145,8 +145,10 @@ Aumenta il valore per ridurre la trasparenza del fondo, oppure usa **0%** per
 eliminarlo. Premi **Apply and save**. Le percentuali vengono ripristinate al
 riavvio; i file impostazioni precedenti restano compatibili.
 
-**Halo model** permette di scegliere **Wide**, **Classic**, **modern** oppure
-**Carbon (Halo + Tyres)**. Carbon applica insieme i due nuovi design: Halo ad
+**Halo model** permette di scegliere **Wide**, **Classic**, **modern**,
+**Carbon (Halo + Tyres)** oppure **Shift**. Shift mette la marcia in primo piano
+nella zona centrale, con RPM e luci di cambiata ben leggibili e velocità
+secondaria; le zone laterali seguono Wide. Carbon applica insieme i due nuovi design: Halo ad
 arco con quadrante circolare, bordo rosso, trama carbonio e caratteri corsivi;
 pannello pneumatici coordinato con monoposto argento/nero/rosso, usura media,
 barre segmentate e temperature Surface/Inner. Tutti i valori sono live;

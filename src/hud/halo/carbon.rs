@@ -208,13 +208,13 @@ impl Carbon {
         for (pedal, label, value, rgb) in [
             (
                 &self.pedals[0],
-                "BRAKE",
+                "BRK",
                 tel.map(|t| t.brake),
                 settings.colours.brake,
             ),
             (
                 &self.pedals[1],
-                "THROTTLE",
+                "THR",
                 tel.map(|t| t.throttle),
                 settings.colours.throttle,
             ),

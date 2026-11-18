@@ -38,10 +38,17 @@ pub enum HaloModel {
     Classic,
     Modern,
     Carbon,
+    Shift,
 }
 
 impl HaloModel {
-    pub const ALL: [Self; 4] = [Self::Wide, Self::Classic, Self::Modern, Self::Carbon];
+    pub const ALL: [Self; 5] = [
+        Self::Wide,
+        Self::Classic,
+        Self::Modern,
+        Self::Carbon,
+        Self::Shift,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -49,6 +56,7 @@ impl HaloModel {
             Self::Classic => "Classic",
             Self::Modern => "modern",
             Self::Carbon => "Carbon (Halo + Tyres)",
+            Self::Shift => "Shift",
         }
     }
 }

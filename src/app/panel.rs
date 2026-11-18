@@ -601,6 +601,7 @@ impl Panel {
                 HaloModel::Classic => 1,
                 HaloModel::Modern => 2,
                 HaloModel::Carbon => 3,
+                HaloModel::Shift => 4,
             },
         );
         self.select(
@@ -721,6 +722,7 @@ impl Panel {
             1 => HaloModel::Classic,
             2 => HaloModel::Modern,
             3 => HaloModel::Carbon,
+            4 => HaloModel::Shift,
             _ => return Err("Select a Halo model.".into()),
         };
         s.bind_ip = self.text(IP).trim().into();

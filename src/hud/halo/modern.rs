@@ -18,9 +18,17 @@ fn left_edge(depth: f32) -> f32 {
 
 fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
     TextCurve::new((0..=96).map(|i| {
-        let x = start + (end - start) * i as f32 / 96.0;
-        (x, edge(x, offset))
+        let angle = (start + (end - start) * i as f32 / 96.0).to_radians();
+        band_point(angle, offset)
     }))
+}
+
+fn band_point(angle: f32, offset: f32) -> (f32, f32) {
+    let radius = RADIUS - offset;
+    (
+        CENTER_X + radius * angle.sin(),
+        153.0 + RADIUS - radius * angle.cos(),
+    )
 }
 
 pub(super) struct Modern {
@@ -28,6 +36,7 @@ pub(super) struct Modern {
     brow: ID2D1PathGeometry,
     top: ID2D1PathGeometry,
     lower_edge: ID2D1PathGeometry,
+    panels: [ID2D1PathGeometry; 4],
     straight_text: TextCurve,
     delta_text: TextCurve,
     fuel_text: [TextCurve; 2],
@@ -49,9 +58,15 @@ impl Modern {
             )?,
             top: arc(factory, 42.0, 798.0, -BAND_DEPTH)?,
             lower_edge: arc(factory, 66.0, 774.0, 0.0)?,
-            straight_text: left_text_curve(42.0, 196.0, TEXT_ROWS[0]),
-            delta_text: left_text_curve(42.0, 196.0, TEXT_ROWS[1]),
-            fuel_text: TEXT_ROWS.map(|offset| left_text_curve(202.0, 262.0, offset)),
+            panels: [
+                panel(factory, -28.3, -17.5, -70.0, -36.0)?,
+                panel(factory, -28.3, -17.5, -33.0, -5.0)?,
+                panel(factory, -16.5, -11.4, -70.0, -5.0)?,
+                panel(factory, 11.0, 28.3, -70.0, -4.0)?,
+            ],
+            straight_text: left_text_curve(-27.7, -18.1, TEXT_ROWS[0]),
+            delta_text: left_text_curve(-27.7, -18.1, TEXT_ROWS[1]),
+            fuel_text: TEXT_ROWS.map(|offset| left_text_curve(-16.0, -12.3, offset)),
             rpm_segments: std::array::from_fn(|i| {
                 let x = 566.0 + i as f32 * 194.0 / 48.0;
                 let next = 566.0 + (i + 1) as f32 * 194.0 / 48.0;
@@ -79,6 +94,9 @@ impl Modern {
         delta: Option<u32>,
         settings: &Settings,
     ) {
+        for panel in &self.panels {
+            p.stroke_geometry(panel, settings.colours.accent, 1.0, 0.85);
+        }
         let sm_active = aero.is_some_and(|a| a.regulations_2026 && a.straight);
         draw_straight_mode(
             p,
@@ -135,9 +153,9 @@ impl Modern {
                 }
             }
         }
-        for (x, width) in [(566.0, 19.0), (663.0, 151.0), (760.0, 31.0)] {
-            let y = edge(x, -9.0);
-            p.rotated((x, y), angle(x, -9.0), |p| {
+        for (x, width) in [(566.0, 19.0), (663.0, 151.0), (750.0, 31.0)] {
+            let y = edge(x, -12.0);
+            p.rotated((x, y), angle(x, -12.0), |p| {
                 let r = rect(x - width / 2.0, y - 7.0, width, 14.0);
                 if x == 566.0 {
                     p.text("0", r, HudLabel, WHITE);
@@ -164,6 +182,61 @@ impl Modern {
                 }
             });
         }
+    }
+}
+
+fn panel(
+    factory: &ID2D1Factory1,
+    left: f32,
+    right: f32,
+    top: f32,
+    bottom: f32,
+) -> Result<ID2D1PathGeometry> {
+    let left = left.to_radians() * RADIUS;
+    let right = right.to_radians() * RADIUS;
+    let corner = 3.0;
+    // Round the corners in arc coordinates so every edge follows the halo.
+    let corners = [
+        (left + corner, top + corner, 180.0_f32),
+        (right - corner, top + corner, 270.0),
+        (right - corner, bottom - corner, 0.0),
+        (left + corner, bottom - corner, 90.0),
+    ];
+    let mut contour = Vec::new();
+    for (index, &(x, y, start)) in corners.iter().enumerate() {
+        for i in 0..=8 {
+            let angle = (start + 90.0 * i as f32 / 8.0).to_radians();
+            contour.push((x + corner * angle.cos(), y + corner * angle.sin()));
+        }
+        let &(next_x, next_y, next_start) = &corners[(index + 1) % corners.len()];
+        let start = *contour.last().unwrap();
+        let end = (
+            next_x + corner * next_start.to_radians().cos(),
+            next_y + corner * next_start.to_radians().sin(),
+        );
+        for i in 1..=32 {
+            let t = i as f32 / 32.0;
+            contour.push((
+                start.0 + (end.0 - start.0) * t,
+                start.1 + (end.1 - start.1) * t,
+            ));
+        }
+    }
+    // SAFETY: the closed contour is cached with the other UI-thread geometries.
+    unsafe {
+        let path = factory.CreatePathGeometry()?;
+        let sink = path.Open()?;
+        for (i, (x, offset)) in contour.into_iter().enumerate() {
+            let (x, y) = band_point(x / RADIUS, offset);
+            if i == 0 {
+                sink.BeginFigure(point(x, y), D2D1_FIGURE_BEGIN_FILLED);
+            } else {
+                sink.AddLine(point(x, y));
+            }
+        }
+        sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+        sink.Close()?;
+        Ok(path.into())
     }
 }
 
@@ -218,6 +291,84 @@ fn arc(factory: &ID2D1Factory1, left: f32, right: f32, offset: f32) -> Result<ID
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn curved_panels_enclose_both_text_rows_and_follow_the_halo() {
+        let factory: ID2D1Factory1 =
+            unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None).unwrap() };
+        let modern = Modern::new(&factory).unwrap();
+        for (panel, curve, start, end, offset, scale, height) in [
+            (
+                0,
+                &modern.straight_text,
+                -27.7,
+                -18.1,
+                TEXT_ROWS[0],
+                1.0,
+                10.0,
+            ),
+            (1, &modern.delta_text, -27.7, -18.1, TEXT_ROWS[1], 1.0, 11.0),
+            (
+                2,
+                &modern.fuel_text[0],
+                -16.0,
+                -12.3,
+                TEXT_ROWS[0],
+                1.2,
+                6.0,
+            ),
+            (
+                2,
+                &modern.fuel_text[1],
+                -16.0,
+                -12.3,
+                TEXT_ROWS[1],
+                1.2,
+                9.0,
+            ),
+        ] {
+            let centre = curve.centre();
+            for i in 0..=20 {
+                let angle: f32 = start + (end - start) * i as f32 / 20.0;
+                for offset in [offset - height, offset + height] {
+                    let (x, y) = band_point(angle.to_radians(), offset);
+                    let position = point(
+                        centre.0 + scale * (x - centre.0),
+                        centre.1 + scale * (y - centre.1),
+                    );
+                    assert!(unsafe {
+                        modern.panels[panel]
+                            .FillContainsPoint(position, None, 0.05)
+                            .unwrap()
+                            .as_bool()
+                    });
+                }
+            }
+        }
+        for (panel, angle, top, bottom) in [
+            (0, -22.9_f32, -70.0, -36.0),
+            (1, -22.9, -33.0, -5.0),
+            (2, -13.95, -70.0, -5.0),
+            (3, 19.65, -70.0, -4.0),
+        ] {
+            for offset in [top, bottom] {
+                let (x, y) = band_point(angle.to_radians(), offset);
+                assert!(unsafe {
+                    modern.panels[panel]
+                        .StrokeContainsPoint(point(x, y), 0.2, None, None, 0.05)
+                        .unwrap()
+                        .as_bool()
+                });
+                assert!(unsafe {
+                    modern
+                        .body
+                        .FillContainsPoint(point(x, y), None, 0.05)
+                        .unwrap()
+                        .as_bool()
+                });
+            }
+        }
+    }
 
     #[test]
     fn fuel_and_sm_follow_the_same_two_rows() {

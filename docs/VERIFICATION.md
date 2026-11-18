@@ -1,5 +1,26 @@
 # Local verification
 
+## Cornici curve Modern e dicitura GAP — 18 novembre 2026
+
+Quattro cornici nel colore accento racchiudono Straight Mode, distacco posteriore,
+FUEL e il gruppo marce nel modello Modern. La cornice destra unica include
+marce, barra e scala RPM, con le etichette interne ai bordi. Bordi e angoli
+arrotondati seguono gli stessi archi dei testi e della fascia Halo;
+le geometrie sono precalcolate. Il distacco
+mostra `GAP + 1.666`, oppure `GAP --` senza dati, in Modern, Wide e Classic.
+
+Le etichette dei pedali usano `BRK` e `THR` in tutti i modelli Halo.
+
+Passati **92 test** (51 unit, 5 game data, 33 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release con `--locked`.
+Il nuovo test Direct2D verifica contenimento delle righe, dimensione FUEL,
+corrispondenza dei bordi con gli archi e posizione interna alla fascia.
+Controllate le anteprime native dei tre modelli con dati simulati, dati
+assenti, SM READY/ON, countdown a 65535 metri, distacco lungo e fondo 0%.
+[Anteprima Modern](../artifacts/halo-modern-panels-preview.png) e
+[valori lunghi](../artifacts/halo-modern-panels-long-values.png).
+Nessuna nuova sessione reale nel gioco.
+
 ## Istanza unica e avvii ripetuti — 17 novembre 2026
 
 Un mutex Windows viene acquisito prima di caricare le impostazioni o creare

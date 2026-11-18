@@ -73,13 +73,13 @@ fn draw_straight_mode(p: &Painter<'_>, aero: Option<Aero>, curve: &TextCurve, rg
 fn draw_gap_behind(p: &Painter<'_>, gap: Option<u32>, curve: &TextCurve) {
     if let Some(millis) = gap {
         p.curved_textf(
-            format_args!("+ {}.{:03}", millis / 1000, millis % 1000),
+            format_args!("GAP + {}.{:03}", millis / 1000, millis % 1000),
             curve,
             HudNumber,
             WHITE,
         );
     } else {
-        p.curved_text("--", curve, HudNumber, MUTED);
+        p.curved_text("GAP --", curve, HudNumber, MUTED);
     }
 }
 
@@ -259,6 +259,7 @@ impl Halo {
 
         let is_classic = settings.halo_model == HaloModel::Classic;
         let is_modern = settings.halo_model == HaloModel::Modern;
+        let is_shift = settings.halo_model == HaloModel::Shift;
         if is_classic {
             self.classic.draw_frame(p, accent, settings.halo.opacity);
         } else if is_modern {
@@ -293,26 +294,52 @@ impl Halo {
                 p.stroke_geometry(
                     segment,
                     if on { WHITE } else { EDGE },
-                    3.8,
+                    if is_shift { 5.2 } else { 3.8 },
                     if on { 1.0 } else { 0.65 },
                 );
             }
-            p.text(
-                tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
-                rect(383.0, 45.0, 74.0, 20.0),
-                HudNumber,
-                if tel.is_some() { WHITE } else { MUTED },
-            );
-            p.line((390.0, 103.0), (450.0, 103.0), EDGE, 0.7, 0.6);
-            if let Some(t) = tel {
-                p.textf(
-                    format_args!("{}", t.speed_kmh),
-                    rect(360.0, 62.0, 120.0, 41.0),
-                    HudSpeed,
-                    WHITE,
+            if is_shift {
+                if let Some(t) = tel {
+                    p.textf(
+                        format_args!("{} RPM", t.rpm),
+                        rect(365.0, 39.0, 110.0, 18.0),
+                        HudFuel,
+                        WHITE,
+                    );
+                    p.textf(
+                        format_args!("{} km/h", t.speed_kmh),
+                        rect(365.0, 57.0, 110.0, 18.0),
+                        HudFuel,
+                        WHITE,
+                    );
+                } else {
+                    p.text("-- RPM", rect(365.0, 39.0, 110.0, 18.0), HudFuel, MUTED);
+                    p.text("-- km/h", rect(365.0, 57.0, 110.0, 18.0), HudFuel, MUTED);
+                }
+                p.text(
+                    tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
+                    rect(383.0, 75.0, 74.0, 30.0),
+                    HudSecondary,
+                    if tel.is_some() { WHITE } else { MUTED },
                 );
             } else {
-                p.text("--", rect(360.0, 62.0, 120.0, 41.0), HudSpeed, MUTED);
+                p.text(
+                    tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
+                    rect(383.0, 45.0, 74.0, 20.0),
+                    HudNumber,
+                    if tel.is_some() { WHITE } else { MUTED },
+                );
+                p.line((390.0, 103.0), (450.0, 103.0), EDGE, 0.7, 0.6);
+                if let Some(t) = tel {
+                    p.textf(
+                        format_args!("{}", t.speed_kmh),
+                        rect(360.0, 62.0, 120.0, 41.0),
+                        HudSpeed,
+                        WHITE,
+                    );
+                } else {
+                    p.text("--", rect(360.0, 62.0, 120.0, 41.0), HudSpeed, MUTED);
+                }
             }
             let percentage = status
                 .and_then(|s| ers_percent(s.ers_joules, snapshot.ers_capacity.map(|c| c.joules)));
@@ -345,13 +372,13 @@ impl Halo {
         for (x, label, value, rgb) in [
             (
                 if is_modern { 282.0 } else { 294.0 },
-                "BRAKE",
+                "BRK",
                 tel.map(|t| t.brake),
                 settings.colours.brake,
             ),
             (
                 if is_modern { 520.0 } else { 508.0 },
-                "THROTTLE",
+                "THR",
                 tel.map(|t| t.throttle),
                 settings.colours.throttle,
             ),
