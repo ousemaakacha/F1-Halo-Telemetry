@@ -498,17 +498,17 @@ impl ResponsiveLayout {
         if y == 345 {
             return (0, 0, 0, 0);
         }
-        if y == 556 {
-            return (self.main_x + 20, self.general_top + 270, inner, h);
+        if y == 576 {
+            return (self.main_x + 20, self.general_top + 296, inner, h);
         }
         let col = (inner - 16) / 2;
-        if y >= 578 {
-            return if y < 611 {
-                (self.main_x + 20, self.general_top + 288, inner, h)
+        if y >= 590 {
+            return if y < 613 {
+                (self.main_x + 20, self.general_top + 314, inner, h)
             } else {
                 (
                     self.main_x + 20 + if y >= 640 { col + 16 } else { 0 },
-                    self.general_top + 321,
+                    self.general_top + 347,
                     col,
                     h,
                 )

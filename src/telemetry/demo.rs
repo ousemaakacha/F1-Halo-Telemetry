@@ -9,6 +9,7 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
     let speed = (190.0 + phase * 125.0).max(0.0);
     let gear = ((speed / 43.0) as i8 + 1).clamp(1, 8);
     let rpm = (6500.0 + (speed % 43.0) * 155.0) as u16;
+    let gap_behind_ms = (1_800.0 + phase * 1_200.0).round() as u32;
     let lights = ((rpm as f32 - 7500.0) / 350.0).clamp(0.0, 15.0) as u32;
     let h = Header {
         game_year: 25,
@@ -43,6 +44,7 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
                 deploy_mode: (seconds / 4.0).rem_euclid(4.0) as u8,
                 harvest_limit_joules: 8_500_000.0,
                 paused: false,
+                fia_flag: None,
             },
         ),
         Packet::Damage(
@@ -85,7 +87,15 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
                 result_status: 2,
                 driver_status: 4,
                 current_lap: 3,
-                gap_behind_ms: Some((1_800.0 + phase * 1_200.0).round() as u32),
+                gap_behind_ms: Some(gap_behind_ms),
+                race_gaps: [
+                    None,
+                    Some(CarGap {
+                        car_index: 0,
+                        millis: gap_behind_ms,
+                    }),
+                ],
+                race_control: RaceControl::default(),
             },
         ),
         Packet::Session(
@@ -135,21 +145,52 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
         b[HEADER_SIZE + 8] = session.formula;
         b[HEADER_SIZE + 14] = session.paused as u8;
         b[HEADER_SIZE + 15] = session.spectating as u8;
+        b[HEADER_SIZE + 124] = session.safety_car.unwrap_or(255);
         return size;
     }
     if let Packet::Lap(_, lap) = packet {
         let offset = HEADER_SIZE + 57 * h.player as usize;
-        b[offset + 32] = 1;
+        let position = if lap.race_gaps[0].is_some() { 2 } else { 1 };
+        b[offset + 32] = position;
         b[offset + 33] = lap.current_lap;
         b[offset + 44] = lap.driver_status;
         b[offset + 45] = lap.result_status;
+        b[offset + 38] = lap.race_control.penalty_seconds;
+        b[offset + 39] = lap.race_control.warnings;
+        b[offset + 41] = lap.race_control.drive_through;
+        b[offset + 42] = lap.race_control.stop_go;
+        if let Some(ahead) = lap.race_gaps[0] {
+            if ahead.car_index as usize >= CAR_COUNT
+                || ahead.car_index == h.player
+                || ahead.millis / 60_000 > u8::MAX as u32
+            {
+                return 0;
+            }
+            b[offset + 14..offset + 16]
+                .copy_from_slice(&((ahead.millis % 60_000) as u16).to_le_bytes());
+            b[offset + 16] = (ahead.millis / 60_000) as u8;
+            let other = HEADER_SIZE + 57 * ahead.car_index as usize;
+            b[other + 32] = position - 1;
+            b[other + 44] = 4;
+            b[other + 45] = 2;
+        }
         if let Some(gap) = lap.gap_behind_ms {
             if gap / 60_000 > u8::MAX as u32 {
                 return 0;
             }
-            // Synthetic lap packets place the player first and the next slot second.
-            let behind = HEADER_SIZE + 57 * ((h.player as usize + 1) % CAR_COUNT);
-            b[behind + 32] = 2;
+            let index = lap.race_gaps[1]
+                .map_or(((h.player as usize + 1) % CAR_COUNT) as u8, |gap| {
+                    gap.car_index
+                });
+            if index as usize >= CAR_COUNT
+                || index == h.player
+                || lap.race_gaps[0].is_some_and(|ahead| ahead.car_index == index)
+            {
+                return 0;
+            }
+            let behind = HEADER_SIZE + 57 * index as usize;
+            b[behind + 32] = position + 1;
+            b[behind + 44] = 4;
             b[behind + 45] = 2;
             b[behind + 14..behind + 16].copy_from_slice(&((gap % 60_000) as u16).to_le_bytes());
             b[behind + 16] = (gap / 60_000) as u8;
@@ -202,6 +243,7 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
             c[41] = s.deploy_mode;
             c[50..54].copy_from_slice(&s.harvest_limit_joules.to_le_bytes());
             c[58] = s.paused as u8;
+            c[28] = s.fia_flag.unwrap_or(255);
         }
         Packet::Damage(_, d) => {
             for (i, v) in d.wear.iter().enumerate() {

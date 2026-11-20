@@ -127,9 +127,17 @@ fn reports(
     )
 }
 
-pub fn held(was_held: bool, eligible: bool, axes: Option<[f32; 2]>) -> bool {
+pub fn held(
+    was_held: bool,
+    eligible: bool,
+    axes: Option<[f32; 2]>,
+    rear_enabled: bool,
+    side_enabled: bool,
+) -> bool {
     eligible
         && axes.is_some_and(|[horizontal, down]| {
+            let horizontal = if side_enabled { horizontal } else { 0.0 };
+            let down = if rear_enabled { down } else { 0.0 };
             let value = horizontal.abs().max(down);
             [horizontal, down]
                 .iter()
@@ -695,7 +703,7 @@ mod tests {
             for (x, expected) in [(0, -1.0), (255, 1.0)] {
                 report[y - 1] = x;
                 assert_eq!(axes_from_report(&report), Some([expected, 0.0]));
-                assert!(held(false, true, axes_from_report(&report)));
+                assert!(held(false, true, axes_from_report(&report), true, true));
             }
             report[y - 1] = 128;
             report[y - 3] = 255;
@@ -723,7 +731,13 @@ mod tests {
                 sThumbRY: y,
                 ..Default::default()
             };
-            assert!(held(false, true, Some(axes_from_xinput(&gamepad))));
+            assert!(held(
+                false,
+                true,
+                Some(axes_from_xinput(&gamepad)),
+                true,
+                true
+            ));
         }
         let gamepad = XINPUT_GAMEPAD {
             sThumbLX: i16::MAX,
@@ -732,14 +746,22 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(axes_from_xinput(&gamepad), [0.0, 0.0]);
-        assert!(!held(false, true, Some(axes_from_xinput(&gamepad))));
+        assert!(!held(
+            false,
+            true,
+            Some(axes_from_xinput(&gamepad)),
+            true,
+            true
+        ));
         assert!(!held(
             false,
             true,
             Some(axes_from_xinput(&XINPUT_GAMEPAD {
                 sThumbRY: i16::MAX,
                 ..Default::default()
-            }))
+            })),
+            true,
+            true,
         ));
     }
 
@@ -772,20 +794,44 @@ mod tests {
     fn hold_has_hysteresis_and_clears_on_release_disabled_context_or_lost_input() {
         for direction in [[0.0_f32, 1.0], [-1.0, 0.0], [1.0, 0.0]] {
             let axes = |amount| Some(direction.map(|value| value * amount));
-            assert!(!held(false, true, axes(0.1)));
-            assert!(held(false, true, axes(0.55)));
-            assert!(held(true, true, axes(0.45)));
-            assert!(!held(false, true, axes(0.45)));
-            assert!(!held(true, true, axes(0.35)));
-            assert!(!held(true, true, axes(0.0)));
-            assert!(!held(true, false, axes(1.0)));
+            assert!(!held(false, true, axes(0.1), true, true));
+            assert!(held(false, true, axes(0.55), true, true));
+            assert!(held(true, true, axes(0.45), true, true));
+            assert!(!held(false, true, axes(0.45), true, true));
+            assert!(!held(true, true, axes(0.35), true, true));
+            assert!(!held(true, true, axes(0.0), true, true));
+            assert!(!held(true, false, axes(1.0), true, true));
         }
-        assert!(!held(true, true, Some([0.0, -1.0])));
-        assert!(!held(true, true, None));
+        assert!(!held(true, true, Some([0.0, -1.0]), true, true));
+        assert!(!held(true, true, None, true, true));
         for invalid in [f32::NAN, f32::INFINITY, -1.1, 1.1] {
-            assert!(!held(true, true, Some([invalid, 1.0])));
-            assert!(!held(true, true, Some([1.0, invalid])));
+            assert!(!held(true, true, Some([invalid, 1.0]), true, true));
+            assert!(!held(true, true, Some([1.0, invalid]), true, true));
         }
+    }
+
+    #[test]
+    fn rear_and_side_toggles_ignore_drift_on_disabled_axes() {
+        for rear in [false, true] {
+            for side in [false, true] {
+                for was_held in [false, true] {
+                    for (axes, expected) in [
+                        ([0.0, 1.0], rear),
+                        ([-1.0, 0.0], side),
+                        ([1.0, 0.0], side),
+                        ([1.0, 1.0], rear || side),
+                        ([0.0, 0.0], false),
+                        ([0.0, -1.0], false),
+                    ] {
+                        assert_eq!(held(was_held, true, Some(axes), rear, side), expected);
+                        assert!(!held(was_held, false, Some(axes), rear, side));
+                        assert!(!held(was_held, true, None, rear, side));
+                    }
+                }
+            }
+        }
+        assert!(held(false, true, Some([f32::NAN, 1.0]), true, false));
+        assert!(held(false, true, Some([1.0, f32::NAN]), false, true));
     }
 
     #[test]
@@ -807,7 +853,7 @@ mod tests {
                 ([0.0, 0.0], false),
                 ([-0.45, 0.0], false),
             ] {
-                hidden = held(hidden, true, Some(axes));
+                hidden = held(hidden, true, Some(axes), true, true);
                 assert_eq!(hidden, expected);
                 let layouts = settings.effective_layouts(true, hidden);
                 assert_eq!(layouts[0].visible, visible && !expected);

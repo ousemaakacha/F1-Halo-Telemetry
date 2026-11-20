@@ -1,5 +1,346 @@
 # Local verification
 
+## Filtri visuale Halo applicati subito — 20 novembre 2026
+
+I due interruttori **Hide Halo** ora applicano e salvano subito la propria
+preferenza, senza richiedere **Apply and save** o applicare altri campi in
+modifica. Disattivarli entrambi esclude il filtro anche dal calcolo finale dei
+layout, compreso un eventuale stato nascosto precedente. In caso di errore
+vengono ripristinati controlli e layout. I registri includono ora i due flag
+effettivi e gli eventi di applicazione delle impostazioni.
+
+Passati **115 test**, rustfmt, Clippy `--all-targets -D warnings` e build Release
+con `--locked`. Il nuovo test di regressione falliva prima della correzione e
+verifica visibilità globale e preferenze indipendenti di entrambi gli HUD.
+La prova sul pannello Win32 ha disattivato e salvato entrambi i filtri senza
+Applica, conservando un campo X non valido ancora in modifica. Con UDP
+sintetico a 60 Hz su porta separata, entrambi gli HUD risultano visibili in
+LIVE e non ci sono errori di presentazione.
+Resta da verificare il comportamento durante una nuova gara con il controller.
+
+## Shift: pedali estesi, avviso cambiata e tacca 10k — 20 novembre 2026
+
+Barre BRK/THR estese da 36,8 a 53,7 unità (+46%) ed etichette abbassate di
+13 unità. Conservati larghezza, centri, inclinazione e riempimento progressivo.
+Il test geometrico include i nuovi ingombri ruotati e conferma che barre ed
+etichette restano interamente nella fascia.
+
+In Shift i 15 segmenti seguono `rpm / max_rpm`; la tacca gialla **10k** indica
+esattamente 10.000 RPM sulla stessa scala, anche cambiando il limite motore.
+Senza limite valido rimangono i LED del gioco e non viene disegnata una tacca
+con posizione presunta. Dalla soglia fissa di 12.500 RPM,
+marcia e anello lampeggiano insieme in rosso a 5 Hz; la tacca resta gialla.
+Nessun avviso in R/N, a giri inferiori alla soglia o con telemetria scaduta.
+
+Passati **114 test**, rustfmt, Clippy `--all-targets -D warnings` e build
+Release con `--locked`. Test su soglia 12.499/12.500 RPM indipendente dai LED,
+superamento limite, tutte le marce avanti, R/N, fase 0/99/100/199/200/299/300/399/400 ms,
+dati assenti e limiti 10.000/12.000/15.000/20.000 RPM.
+Il primo giro ha rilevato un timeout di due secondi nel test UDP di recupero;
+la ripetizione completa dei controlli è passata senza modificare quel test.
+
+Nella prova nel gioco F1 ha comunicato 12.278 RPM, LED cambiata al 100% e
+un limite di 13.099 RPM: la precedente soglia di 13.500 RPM era irraggiungibile.
+La soglia fissa è stata portata a 12.500 RPM su richiesta dell'utente.
+Diagnostics ed esportazione JSON includono RPM motore, limite e percentuale LED.
+
+Confrontati 85 render nativi, 17 condizioni per ciascuno dei cinque modelli,
+più due fasi del lampeggio Shift. Le asserzioni sui pixel verificano marcia
+e anello sincronizzati, tacca gialla persistente, scadenza e dati mancanti.
+Fuori dal centro e dai pedali di Shift i pixel coincidono con il riferimento.
+Classic, Modern e Carbon coincidono integralmente; Wide presenta soltanto
+due pixel con scarto antialias 4/255 nei casi senza dati, scaduti o senza limite.
+
+Anteprime native con dati simulati: [normale](../artifacts/shift-revs-live.png),
+[fase rossa a 12.500 RPM](../artifacts/shift-revs-threshold.png),
+[10.000 RPM da fermo](../artifacts/shift-revs-launch.png),
+[dati assenti](../artifacts/shift-revs-missing.png).
+Smoke test dell'app Release in Demo: sei secondi, 348 frame aggiornati,
+60,00 Hz e zero errori di presentazione DirectX.
+[Report](../artifacts/shift-revs-smoke.json).
+Lampeggio a 12.500 RPM verificato nei test e nei render nativi; resta da
+verificare durante una nuova guida nel gioco.
+
+## Toggle separati per nascondere Halo dietro e ai lati — 19 novembre 2026
+
+Il pannello espone **Hide Halo in rear view** e **Hide Halo in side views**.
+Le preferenze vengono salvate separatamente; disattivare una direzione esclude
+il relativo asse dal filtro, anche in presenza di drift o di un precedente
+stato nascosto. Il cambio dei toggle con Applica azzera l'isteresi precedente.
+Conservati soglie 55%/35%, vincoli di guida/focus, visibilità manuale, mini HUD
+pneumatici e scorciatoia del controller per entrambi gli HUD.
+
+Passati **112 test**, rustfmt, Clippy `--all-targets -D warnings` e build Release
+con `--locked`. Verificate
+tutte le quattro combinazioni dei toggle, destra/sinistra/indietro, ritorno al
+centro, input assente e contesto disabilitato. I test del pannello Win32
+controllano lettura indipendente, navigazione, ingombri e assenza di sovrapposizioni
+in otto formati e DPI 96/144/192. Verificati salvataggio e ricaricamento di
+entrambi i valori e migrazione dei vecchi file: il precedente toggle comune
+viene mantenuto per entrambe le direzioni, comprese le disattivazioni.
+La diagnostica distingue `rear_view_enabled` e `side_view_enabled`.
+
+Nessuna prova con controller fisico o con F1 in esecuzione.
+
+## Centro Shift con km/h e mph, senza ERS duplicato — 19 novembre 2026
+
+Rimosse soltanto da Shift percentuale/MJ ERS e modalità nel quadrante centrale.
+Il centro mostra marcia grande, km/h e mph su due righe; ERS e modalità restano
+nel riquadro destro esistente. Conservati LED di cambiata, barre, ali, avvisi,
+profili e impostazioni. Gli mph derivano dal valore km/h ricevuto usando
+1 miglio = 1.609344 km e si visualizzano arrotondati all'intero. Le due letture
+condividono validità e scadenza di Car Telemetry; senza dati mostrano `--`.
+
+Passati i **17 test Halo**, rustfmt, Clippy `--all-targets -D warnings` e build
+Release con `--locked`. Confrontate **40 immagini native**: otto condizioni
+per cinque modelli. La cattura delle chiamate DirectWrite conferma che il
+centro Shift disegna esattamente tre testi, anche senza dati o dopo la scadenza:
+marcia, km/h e mph, senza ERS o modalità. Verificati 285→177, 100→62, 10→6,
+0→0 e 65535→40722. Cambiare soltanto energia, modalità e capacità ERS non
+modifica alcun pixel del quadrante centrale.
+
+Fuori dal centro di Shift i pixel coincidono con la versione precedente.
+Classic, Modern e Carbon coincidono integralmente; Wide conserva solo i
+consueti scarti antialias di due pixel 4/255 nei casi assenti/scaduti.
+Anteprime: [normale](../artifacts/shift-kph-mph-preview.png),
+[dati assenti](../artifacts/shift-kph-mph-missing.png),
+[valore massimo supportato](../artifacts/shift-kph-mph-max-speed.png).
+
+File di questa modifica: `src/hud/halo.rs`, `README.md`,
+`docs/ARCHITECTURE.md`, questo documento e le tre anteprime
+`artifacts/shift-kph-mph-*.png`. Nessuna nuova prova nel gioco.
+
+## Barre THR/BRK di Shift più larghe — 18 novembre 2026
+
+Larghezza di entrambe le barre aumentata da 16 a 36 unità (+125%). Altezza
+36.8, centri, inclinazioni, etichette, scala dei valori e telemetria restano
+quelli esistenti. La larghezza è condivisa tra fondo, riempimento e test
+geometrico per verificare l'ingombro effettivo dentro la fascia.
+
+Passati i tre test Shift, rustfmt, Clippy `--all-targets -D warnings` e build
+Release con `--locked`. Confrontate 20 immagini native: dati parziali, 100%,
+zero e dati assenti per cinque modelli. In Shift i pixel cambiano soltanto
+nelle due barre; gli altri modelli restano invariati salvo i piccoli scarti
+antialias già ammessi (due pixel 4/255 nel caso Wide senza dati).
+[Anteprima con BRK 60% e THR 85% simulati](../artifacts/shift-pedals-wide-preview.png).
+
+File di questa modifica: `src/hud/halo/shift.rs`, questo documento e
+`artifacts/shift-pedals-wide-preview.png`. Nessuna nuova prova nel gioco.
+
+## Shift con design Modern e centro senza RPM numerici — 18 novembre 2026
+
+Shift ora richiama direttamente il fondo, il bordo e l'arco superiore di
+Modern, mantenendo una disposizione propria. Il file `src/hud/halo/modern.rs`
+non è stato modificato: SHA256 prima/dopo
+`D538B6487AEE2B97D882672C3174DD752D4287208D93D9CD2E8E7A5380D79286`.
+
+Misure: raggio 710 come Modern; ali da ±12° a ±28°; riquadri da -70 a -4 di
+profondità, con tre righe comuni (-61.5, -36.5, -11.5). I due riquadri per i
+distacchi e i tre per ERS/Straight/Fuel hanno ingombri esterni speculari e
+margini uniformi. Ogni testo viene misurato e ridotto solo se necessario per
+rientrare nella propria curva. Pedali di larghezza 16 e altezza 36.8, su
+centri 301 e 539 e inclinazioni -9°/+9°, con etichette dentro la fascia.
+
+La marcia è l'informazione centrale più grande; la velocità e l'ERS sono
+secondari. Rimossa la scritta numerica RPM, mantenuti i 15 LED di cambiata.
+Tolte le copie Fuel e Straight Mode dell'ala sinistra di Shift, perché gli
+stessi dati restano nei riquadri destri. In assenza di capacità, la didascalia
+ERS indica MJ e il valore è mostrato senza stimare la percentuale. La fascia
+avvisi e il testo di connessione conservano posizione e comportamento.
+Nessuna modifica a parser, telemetria, selettore, preferenze o modello predefinito.
+
+Passati **110 test** (56 unit, 8 avvisi, 5 game data, 38 protocollo, 3 UDP),
+rustfmt, Clippy `--all-targets -D warnings` e build Release con `--locked`.
+I test geometrici verificano simmetria, contenimento di tutte le righe nei
+riquadri Direct2D e contenimento dei pedali/etichette nel corpo Modern.
+
+Confrontate **65 anteprime native** (13 condizioni per cinque modelli),
+inclusi dati mancanti, SM READY/ON, distanza massima, MJ, valori lunghi,
+fondo trasparente, avviso SC, N/R, velocità massima e colori personalizzati.
+Modern, Classic e Carbon coincidono integralmente con la copia precedente.
+Wide presenta solo uno/due pixel con scarto massimo 4/255 in due condizioni,
+entro la tolleranza antialias già usata nelle verifiche precedenti.
+Avvisi e connessione di Shift coincidono nei pixel. Un confronto separato
+dimostra che passare da 11600 a 1234 RPM, lasciando fissi i bit dei LED, non
+modifica alcun pixel di Shift.
+
+Anteprime: [normale](../artifacts/shift-modern-preview.png),
+[valori lunghi](../artifacts/shift-modern-long-values.png),
+[dati assenti](../artifacts/shift-modern-missing.png),
+[avviso SC](../artifacts/shift-modern-alert.png),
+[MJ](../artifacts/shift-modern-mj.png).
+Nessuna nuova sessione reale nel gioco.
+
+File di questa modifica: `src/hud/halo.rs`, `src/hud/halo/shift.rs`
+(layout e test geometrici), `README.md`, `docs/ARCHITECTURE.md`, questo
+documento e le cinque anteprime `artifacts/shift-modern-*.png`.
+
+## Fascia avvisi Shift — 18 novembre 2026
+
+Completata in coda alla zona destra. Solo Shift aggiunge un banner statico
+nella fascia libera sotto il quadrante, sopra il precedente stato di
+connessione. Centro e ali non cambiano. I messaggi usano esclusivamente dati
+EA verificati: FIA flags locali, SC/VSC, incrementi dei contatori di penalità
+e warning, eventi `RDFL` e `CHQF`. Dettagli e limiti nel [contratto UDP](PROTOCOL.md).
+
+Durata massima cinque secondi dal cambio, senza rinnovo sui pacchetti uguali.
+Stato cessato, sorgente invalida/scaduta, pausa, garage, spettatore e cambio
+sessione/timeline li invalidano prima. I conteggi iniziali non producono falsi
+nuovi eventi. Distinti eventi nello stesso frame non fanno perdere una nuova
+rossa/scacchi; i duplicati e gli eventi vecchi non rinnovano la notifica.
+La priorità privilegia rossa, SC/VSC e gialla rispetto ai messaggi secondari.
+
+Passati **109 test** (55 unit, 8 avvisi, 5 game data, 38 protocollo, 3 UDP),
+rustfmt, Clippy `--all-targets -D warnings` e build Release con `--locked`.
+I nuovi test verificano offset indipendenti per gli slot 0 e 23, sconosciuti,
+durata senza rinnovo, cessazione, SC/VSC e formazione, contatori con base fresca,
+priorità, doppioni nello stesso frame, eventi ritardati, pausa, invalidazione,
+Session End, cambio UID, flashback e riavvio. Un test distinto impedisce di
+considerare attuale un campione vecchio solo perché appena ricevuto.
+
+Confrontate **90 anteprime Direct2D** (18 condizioni per cinque modelli),
+comprese tutte le etichette, valori massimi dei contatori, scadenze, sorgenti
+obsolete, SC terminato, formazione e fondo trasparente. Classic, Modern e
+Carbon coincidono integralmente con la copia precedente; Wide presenta un
+solo pixel con scarto 4/255 in un caso. Le zone protette di Shift presentano
+al massimo un pixel con scarto 5/255, entro la tolleranza antialias già usata.
+Ispezionate [Safety Car](../artifacts/shift-alerts-safety-car.png),
+[rossa](../artifacts/shift-alerts-red-flag.png),
+[penalità](../artifacts/shift-alerts-penalty.png) e
+[warning](../artifacts/shift-alerts-warning.png).
+Nessuna nuova sessione reale nel gioco.
+
+File di questa modifica:
+
+- `src/telemetry/alerts.rs` (nuovo), `state.rs`, `protocol.rs`, `mod.rs` e
+  `demo.rs`: dati, ciclo di vita e codifica dei campi per i simulatori espliciti.
+- `src/hud/halo.rs` e `src/hud/halo/shift.rs`: sola fascia avvisi Shift.
+- `src/udp/mod.rs`: invalidazione per sorgenti malformate/non supportate.
+- `src/app/mod.rs`: scadenza e aggiornamento del banner.
+- `tests/alerts.rs` (nuovo) e `tests/protocol.rs`: verifiche dei dati e del ciclo.
+- `README.md`, `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, questo documento e
+  le quattro anteprime `artifacts/shift-alerts-*.png`.
+
+## Zona destra Shift — 18 novembre 2026
+
+Sostituiti soltanto i contenuti marce/RPM dell'ala destra di Shift con tre
+colonne: ERS e modalità, Straight Mode e distanza disponibile, margine Fuel
+in giri. Restano il fondo esistente, gli helper comuni e i filtri a 500 ms.
+Con capacità ERS nota si mostra la percentuale; altrimenti i MJ ricevuti.
+Fuel è il margine MFD con segno e un decimale, senza ulteriori stime. Dati
+assenti o scaduti producono `--%`, modalità `--`, `SM --` e Fuel `--`.
+SM pre-2026 resta `SM N/A`; distanza zero non implica READY.
+
+Valori e sottolineature di attenzione sono statici e locali: ERS esattamente
+esaurito e margine Fuel visualizzato negativo usano il colore Brake;
+BOOST e SM READY usano Accent; SM ON usa Throttle. Nessuna soglia ERS bassa
+stimata, lampeggio o nuovo avviso temporaneo. Numeri eccezionalmente lunghi
+usano la notazione scientifica per conservare la leggibilità.
+
+Passati **101 test** (55 unit, 5 game data, 38 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release con `--locked`.
+Due nuovi test controllano evidenziazioni, dati assenti, segno Fuel e
+contenimento delle righe nella fascia Direct2D. Il sorgente della zona
+centrale e quello di Left coincidono con la copia precedente alla modifica.
+
+Confrontate 70 anteprime native: 14 condizioni per ciascuno dei cinque
+modelli, inclusi dati parziali, scadenze indipendenti, capacità sconosciuta,
+SM N/A, READY/ON, distanza massima, colori personalizzati e valori estremi.
+Centro, sinistra e fascia degli avvisi di Shift coincidono nei pixel in
+tutti i casi. Classic, Modern e Carbon coincidono integralmente; Wide
+presenta solo due pixel con scarto massimo 4/255 in due condizioni, entro
+la tolleranza antialias già usata nelle verifiche precedenti.
+Ispezionate [anteprima](../artifacts/shift-right-preview.png),
+[attenzione](../artifacts/shift-right-attention.png),
+[MJ senza capacità](../artifacts/shift-right-mj.png) e
+[dati assenti](../artifacts/shift-right-missing.png).
+Nessuna nuova sessione reale nel gioco.
+
+File di questa modifica: `src/hud/halo.rs`, `src/hud/halo/shift.rs`
+(renderer Right e due test), `README.md`, `docs/ARCHITECTURE.md`, questo
+documento e le quattro anteprime `artifacts/shift-right-*.png`.
+
+## Zona sinistra Shift — 18 novembre 2026
+
+Solo Shift sostituisce il precedente riquadro GAP con due valori etichettati
+**AHEAD** e **BEHIND**, in secondi e con precisione al millisecondo. Straight
+Mode e Fuel conservano posizione e comportamento; il quadrante centrale,
+la zona destra e lo stato temporaneo di connessione usano il codice precedente.
+Il selettore, il modello predefinito e le impostazioni salvate non sono modificati.
+
+Verificati parser, sequenza e timestamp prima di introdurre l'andamento. Il
+delta anteriore proviene dal record locale di Lap Data; quello posteriore dal
+record dell'auto nella posizione successiva, riusando la lettura esistente.
+Le due auto devono essere attive, fuori dal garage e univocamente identificabili
+per posizione. Lo storico richiede la stessa auto, tempo di gioco crescente,
+almeno un secondo sia di gioco sia di ricezione e nessun intervallo superiore
+a 500 ms. La soglia è 50 ms; freccia giù = distacco in riduzione, freccia su =
+distacco in aumento. Il trattino neutro copre andamento non determinato e
+variazioni piccole; `--` indica un distacco assente o scaduto.
+
+Passati **99 test** (53 unit, 5 game data, 38 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release con `--locked`.
+I nuovi test coprono identità e ordinamento delle auto, zero valido, intervalli
+lunghi, dati mancanti/invalidi/ambigui, soglia temporale e rumore, cambio auto,
+pausa, scadenza, duplicati, riordino, tempo fermo e flashback.
+
+Confrontate 30 anteprime Direct2D 2000 × 600 con il renderer del commit
+`b89db12`: cinque modelli, ciascuno con dati live simulati, assenti, andamento
+neutro, valori lunghi, fondo trasparente e Lap Data scaduto. Classic, Modern e
+Carbon coincidono nei pixel in tutti gli scenari; Wide coincide in cinque
+scenari e differisce in due pixel con scarto massimo 4/255 nel caso scaduto.
+Nelle zone protette di Shift lo scarto massimo è un pixel con differenza
+5/255; il confronto usa una tolleranza di otto pixel isolati con scarto
+massimo di otto livelli sui bordi antialias.
+Ispezionate le anteprime con valori normali, assenti e lunghi:
+[live simulato](../artifacts/shift-left-preview.png),
+[dati assenti](../artifacts/shift-left-missing.png),
+[valori lunghi](../artifacts/shift-left-long-values.png).
+Nessuna nuova sessione reale nel gioco.
+
+File della modifica:
+
+- `src/hud/halo.rs`, nuovo `src/hud/halo/shift.rs`: rendering limitato a sinistra.
+- `src/telemetry/protocol.rs`, nuovo `src/telemetry/gaps.rs`,
+  `src/telemetry/state.rs`, `src/telemetry/mod.rs`: intervalli, identità,
+  temporizzazione, andamento e invalidazione indipendenti dai modelli esistenti.
+- `src/telemetry/demo.rs`: codifica dei nuovi campi per i soli simulatori espliciti.
+- `src/udp/mod.rs`: invalidazione dei nuovi dati su Lap Data malformato.
+- `src/app/mod.rs`: scadenza e ridisegno dei nuovi indicatori.
+- `tests/protocol.rs`: cinque nuovi test di parsing e ciclo di vita.
+- `README.md`, `docs/PROTOCOL.md`, `docs/ARCHITECTURE.md`, questo documento:
+  uso, fonti e verifiche.
+- `artifacts/shift-left-preview.png`, `artifacts/shift-left-missing.png`,
+  `artifacts/shift-left-long-values.png`: anteprime native.
+
+## Scomparsa temporanea di entrambi gli HUD — 18 novembre 2026
+
+Il controllo locale dei registri Windows non ha trovato crash riferiti
+all'overlay o a F1 25, né reset del driver video nelle dieci ore precedenti
+il controllo. Il report utente disponibile era del 9 novembre, quindi non
+documenta la gara segnalata. Due avvisi generici HidBth del 18 novembre
+(15:16 e 17:39, ora locale) non identificano una causa della scomparsa con USB.
+
+Il filtro dello stick destro riguarda soltanto Halo. Entrambi gli HUD invece
+si nascondono quando scadono telemetria/Lap Data (500 ms) o Session (2 s),
+oppure quando il gioco segnala una pausa o la fine della guida. Non è stata
+modificata questa logica in assenza di una registrazione della gara.
+
+Aggiunto `session-events.jsonl` accanto alle impostazioni, con timestamp,
+età dei pacchetti, flag pausa/sessione, controller, visibilità e codici degli
+errori grafici. La scrittura avviene agli eventi e il registro ruota a
+256 KiB mantenendo una copia precedente. Gli errori di scrittura vengono
+esposti nella diagnostica senza interrompere l'app.
+
+Passati **94 test** (53 unit, 5 game data, 33 protocollo, 3 UDP), rustfmt,
+Clippy `--all-targets -D warnings` e build Release con `--locked`.
+Le [13 verifiche native con UDP sintetico](../artifacts/visibility-events-smoke.json)
+confermano la registrazione distinta di interruzioni Telemetry, Lap e Session,
+pausa locale e di rete, scomparsa/ritorno di entrambi gli HUD e ricreazione
+grafica forzata. Nessun pacchetto malformato, errore Present o modifica alle
+impostazioni. La causa nella gara reale e il confronto USB/Bluetooth restano
+da verificare con il nuovo registro.
+
 ## Cornici curve Modern e dicitura GAP — 18 novembre 2026
 
 Quattro cornici nel colore accento racchiudono Straight Mode, distacco posteriore,

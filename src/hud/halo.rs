@@ -1,6 +1,7 @@
 mod carbon;
 mod classic;
 mod modern;
+mod shift;
 
 use crate::{
     graphics::{Font::*, *},
@@ -161,9 +162,12 @@ fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
 }
 
 pub struct Halo {
+    animation_start: Instant,
     carbon: carbon::Carbon,
     classic: classic::Classic,
     modern: modern::Modern,
+    shift_left: shift::Left,
+    shift_right: shift::Right,
     ribbon: ID2D1PathGeometry,
     brow: ID2D1PathGeometry,
     lower_edge: ID2D1PathGeometry,
@@ -182,9 +186,12 @@ pub struct Halo {
 impl Halo {
     pub fn new(factory: &ID2D1Factory1) -> Result<Self> {
         Ok(Self {
+            animation_start: Instant::now(),
             carbon: carbon::Carbon::new(factory)?,
             classic: classic::Classic::new(factory)?,
             modern: modern::Modern::new(factory)?,
+            shift_left: shift::Left::new(factory)?,
+            shift_right: shift::Right::new(factory)?,
             ribbon: halo_path(factory, 0.0, 875.0, -82.0, Some((20.0, 825.0, -3.0)))?,
             brow: halo_path(factory, 0.0, 875.0, -82.0, None)?,
             lower_edge: halo_path(factory, 20.0, 825.0, 0.0, None)?,
@@ -260,9 +267,22 @@ impl Halo {
         let is_classic = settings.halo_model == HaloModel::Classic;
         let is_modern = settings.halo_model == HaloModel::Modern;
         let is_shift = settings.halo_model == HaloModel::Shift;
+        let modern_shape = is_modern || is_shift;
+        let shift_flash = is_shift
+            && shift::shift_flash(tel, now.saturating_duration_since(self.animation_start));
+        let dial_colour = if shift_flash {
+            shift::SHIFT_RED
+        } else {
+            accent
+        };
+        let rpm = if is_shift {
+            rpm_fraction(tel, status)
+        } else {
+            None
+        };
         if is_classic {
             self.classic.draw_frame(p, accent, settings.halo.opacity);
-        } else if is_modern {
+        } else if modern_shape {
             self.modern.draw_frame(p, accent, settings.halo.opacity);
         } else {
             p.geometry(&self.ribbon, INK, settings.halo.opacity);
@@ -273,158 +293,188 @@ impl Halo {
             }
         }
 
-        if !is_modern {
+        if !modern_shape {
             for rib in &self.ribs {
                 p.stroke_geometry(rib, EDGE, 0.9, 0.8);
             }
         }
-        p.scaled((CENTER_X, 94.0), if is_modern { 1.12 } else { 1.0 }, |p| {
-            // The ring retains the game's 15 rev-light bits, from left to right.
-            p.circle(
-                420.0,
-                94.0,
-                if is_modern { 60.0 } else { 56.0 },
-                INK,
-                settings.halo.opacity,
-            );
-            p.stroke_geometry(&self.dial, accent, 8.0, 0.06);
-            p.stroke_geometry(&self.dial, accent, 2.2, 1.0);
-            for (i, segment) in self.rev_segments.iter().enumerate() {
-                let on = tel.is_some_and(|t| t.rev_bits & (1 << i) != 0);
-                p.stroke_geometry(
-                    segment,
-                    if on { WHITE } else { EDGE },
-                    if is_shift { 5.2 } else { 3.8 },
-                    if on { 1.0 } else { 0.65 },
+        p.scaled(
+            (CENTER_X, 94.0),
+            if modern_shape { 1.12 } else { 1.0 },
+            |p| {
+                // The ring retains the game's 15 rev-light bits, from left to right.
+                // Shift uses actual RPM so the 10k launch tick shares its scale.
+                p.circle(
+                    420.0,
+                    94.0,
+                    if modern_shape { 60.0 } else { 56.0 },
+                    INK,
+                    settings.halo.opacity,
                 );
-            }
-            if is_shift {
-                if let Some(t) = tel {
-                    p.textf(
-                        format_args!("{} RPM", t.rpm),
-                        rect(365.0, 39.0, 110.0, 18.0),
-                        HudFuel,
-                        WHITE,
+                p.stroke_geometry(&self.dial, dial_colour, 8.0, 0.06);
+                p.stroke_geometry(&self.dial, dial_colour, 2.2, 1.0);
+                for (i, segment) in self.rev_segments.iter().enumerate() {
+                    let on = rpm.map_or_else(
+                        || tel.is_some_and(|t| t.rev_bits & (1 << i) != 0),
+                        |rpm| rpm * self.rev_segments.len() as f32 > i as f32,
                     );
-                    p.textf(
-                        format_args!("{} km/h", t.speed_kmh),
-                        rect(365.0, 57.0, 110.0, 18.0),
-                        HudFuel,
-                        WHITE,
+                    p.stroke_geometry(
+                        segment,
+                        if shift_flash {
+                            shift::SHIFT_RED
+                        } else if on {
+                            WHITE
+                        } else {
+                            EDGE
+                        },
+                        if is_shift { 5.2 } else { 3.8 },
+                        if on || shift_flash { 1.0 } else { 0.65 },
                     );
-                } else {
-                    p.text("-- RPM", rect(365.0, 39.0, 110.0, 18.0), HudFuel, MUTED);
-                    p.text("-- km/h", rect(365.0, 57.0, 110.0, 18.0), HudFuel, MUTED);
                 }
-                p.text(
-                    tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
-                    rect(383.0, 75.0, 74.0, 30.0),
-                    HudSecondary,
-                    if tel.is_some() { WHITE } else { MUTED },
-                );
-            } else {
-                p.text(
-                    tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
-                    rect(383.0, 45.0, 74.0, 20.0),
-                    HudNumber,
-                    if tel.is_some() { WHITE } else { MUTED },
-                );
-                p.line((390.0, 103.0), (450.0, 103.0), EDGE, 0.7, 0.6);
-                if let Some(t) = tel {
-                    p.textf(
-                        format_args!("{}", t.speed_kmh),
-                        rect(360.0, 62.0, 120.0, 41.0),
-                        HudSpeed,
-                        WHITE,
-                    );
-                } else {
-                    p.text("--", rect(360.0, 62.0, 120.0, 41.0), HudSpeed, MUTED);
-                }
-            }
-            let percentage = status
-                .and_then(|s| ers_percent(s.ers_joules, snapshot.ers_capacity.map(|c| c.joules)));
-            let energy_colour = ers_colour(aero);
-            if let Some(percent) = percentage {
-                p.textf(
-                    format_args!("{percent:.0}%"),
-                    rect(365.0, 105.0, 110.0, 29.0),
-                    HudSecondary,
-                    energy_colour,
-                );
-            } else if let Some(s) = status {
-                p.textf(
-                    format_args!("{:.2} MJ", s.ers_joules / 1_000_000.0),
-                    rect(365.0, 105.0, 110.0, 29.0),
-                    HudNumber,
-                    energy_colour,
-                );
-            } else {
-                p.text("--%", rect(365.0, 105.0, 110.0, 29.0), HudSecondary, MUTED);
-            }
-            p.text(
-                deploy_label(status),
-                rect(361.0, 132.0, 118.0, 13.0),
-                HudLabel,
-                energy_colour,
-            );
-        });
-
-        for (x, label, value, rgb) in [
-            (
-                if is_modern { 282.0 } else { 294.0 },
-                "BRK",
-                tel.map(|t| t.brake),
-                settings.colours.brake,
-            ),
-            (
-                if is_modern { 520.0 } else { 508.0 },
-                "THR",
-                tel.map(|t| t.throttle),
-                settings.colours.throttle,
-            ),
-        ] {
-            let angle = if is_modern || is_classic {
-                if x < CENTER_X { -9.0 } else { 9.0 }
-            } else {
-                halo_angle(x + 19.0)
-            };
-            p.rotated((x + 19.0, 107.0), angle, |p| {
-                for i in 0..10 {
-                    let y = if is_modern {
-                        138.0 - i as f32 * 8.2
+                if is_shift {
+                    shift::draw_launch_marker(p, status);
+                    p.scaled((CENTER_X, 66.0), 4.0 / 3.0, |p| {
+                        p.text(
+                            tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
+                            rect(383.0, 44.0, 74.0, 44.0),
+                            HudSpeed,
+                            if shift_flash {
+                                shift::SHIFT_RED
+                            } else if tel.is_some() {
+                                WHITE
+                            } else {
+                                MUTED
+                            },
+                        );
+                    });
+                    if let Some(t) = tel {
+                        p.textf(
+                            format_args!("{} km/h", t.speed_kmh),
+                            rect(365.0, 88.0, 110.0, 26.0),
+                            HudNumber,
+                            WHITE,
+                        );
+                        p.textf(
+                            format_args!("{:.0} mph", f64::from(t.speed_kmh) / 1.609_344),
+                            rect(365.0, 118.0, 110.0, 22.0),
+                            HudFuel,
+                            WHITE,
+                        );
                     } else {
-                        136.0 - i as f32 * 7.2
-                    };
-                    let height = if is_modern { 6.4 } else { 5.4 };
-                    p.fill(
-                        rect(x, y, 38.0, height),
-                        if is_modern { [31, 38, 46] } else { EDGE },
-                        if is_modern { 0.9 } else { 0.55 },
+                        p.text("-- km/h", rect(365.0, 88.0, 110.0, 26.0), HudNumber, MUTED);
+                        p.text("-- mph", rect(365.0, 118.0, 110.0, 22.0), HudFuel, MUTED);
+                    }
+                } else {
+                    p.text(
+                        tel.map(|t| gear_label(t.gear)).unwrap_or("--"),
+                        rect(383.0, 45.0, 74.0, 20.0),
+                        HudNumber,
+                        if tel.is_some() { WHITE } else { MUTED },
                     );
-                    if let Some(value) = value {
-                        let level = (pedal_percent(value) / 10.0 - i as f32).clamp(0.0, 1.0);
-                        if level > 0.0 {
-                            p.fill(
-                                rect(x, y + height * (1.0 - level), 38.0, height * level),
-                                rgb,
-                                1.0,
-                            );
-                        }
+                    p.line((390.0, 103.0), (450.0, 103.0), EDGE, 0.7, 0.6);
+                    if let Some(t) = tel {
+                        p.textf(
+                            format_args!("{}", t.speed_kmh),
+                            rect(360.0, 62.0, 120.0, 41.0),
+                            HudSpeed,
+                            WHITE,
+                        );
+                    } else {
+                        p.text("--", rect(360.0, 62.0, 120.0, 41.0), HudSpeed, MUTED);
                     }
                 }
-                p.text(
-                    label,
-                    rect(x - 9.0, if is_modern { 146.0 } else { 141.0 }, 56.0, 13.0),
-                    HudLabel,
-                    WHITE,
-                );
-                if value.is_none() {
-                    p.text("--", rect(x, 115.0, 38.0, 22.0), HudNumber, MUTED);
+                if !is_shift {
+                    let percentage = status.and_then(|s| {
+                        ers_percent(s.ers_joules, snapshot.ers_capacity.map(|c| c.joules))
+                    });
+                    let energy_colour = ers_colour(aero);
+                    if let Some(percent) = percentage {
+                        p.textf(
+                            format_args!("{percent:.0}%"),
+                            rect(365.0, 105.0, 110.0, 29.0),
+                            HudSecondary,
+                            energy_colour,
+                        );
+                    } else if let Some(s) = status {
+                        p.textf(
+                            format_args!("{:.2} MJ", s.ers_joules / 1_000_000.0),
+                            rect(365.0, 105.0, 110.0, 29.0),
+                            HudNumber,
+                            energy_colour,
+                        );
+                    } else {
+                        p.text("--%", rect(365.0, 105.0, 110.0, 29.0), HudSecondary, MUTED);
+                    }
+                    p.text(
+                        deploy_label(status),
+                        rect(361.0, 132.0, 118.0, 13.0),
+                        HudLabel,
+                        energy_colour,
+                    );
                 }
-            });
+            },
+        );
+
+        if is_shift {
+            shift::draw_pedals(p, tel, settings);
+        } else {
+            for (x, label, value, rgb) in [
+                (
+                    if is_modern { 282.0 } else { 294.0 },
+                    "BRK",
+                    tel.map(|t| t.brake),
+                    settings.colours.brake,
+                ),
+                (
+                    if is_modern { 520.0 } else { 508.0 },
+                    "THR",
+                    tel.map(|t| t.throttle),
+                    settings.colours.throttle,
+                ),
+            ] {
+                let angle = if is_modern || is_classic {
+                    if x < CENTER_X { -9.0 } else { 9.0 }
+                } else {
+                    halo_angle(x + 19.0)
+                };
+                p.rotated((x + 19.0, 107.0), angle, |p| {
+                    for i in 0..10 {
+                        let y = if is_modern {
+                            138.0 - i as f32 * 8.2
+                        } else {
+                            136.0 - i as f32 * 7.2
+                        };
+                        let height = if is_modern { 6.4 } else { 5.4 };
+                        p.fill(
+                            rect(x, y, 38.0, height),
+                            if is_modern { [31, 38, 46] } else { EDGE },
+                            if is_modern { 0.9 } else { 0.55 },
+                        );
+                        if let Some(value) = value {
+                            let level = (pedal_percent(value) / 10.0 - i as f32).clamp(0.0, 1.0);
+                            if level > 0.0 {
+                                p.fill(
+                                    rect(x, y + height * (1.0 - level), 38.0, height * level),
+                                    rgb,
+                                    1.0,
+                                );
+                            }
+                        }
+                    }
+                    p.text(
+                        label,
+                        rect(x - 9.0, if is_modern { 146.0 } else { 141.0 }, 56.0, 13.0),
+                        HudLabel,
+                        WHITE,
+                    );
+                    if value.is_none() {
+                        p.text("--", rect(x, 115.0, 38.0, 22.0), HudNumber, MUTED);
+                    }
+                });
+            }
         }
 
-        if !is_modern {
+        if !modern_shape {
             p.rotated(
                 (260.0, 123.0),
                 if is_classic {
@@ -446,11 +496,25 @@ impl Halo {
         } else if is_modern {
             self.modern
                 .draw_wings(p, tel, status, aero, snapshot.gap_behind_ms(now), settings);
+        } else if is_shift {
+            self.shift_left.draw(p, snapshot.race_gaps(now), settings);
+            self.shift_right.draw(
+                p,
+                status,
+                aero,
+                snapshot.ers_capacity.map(|c| c.joules),
+                settings,
+            );
         } else {
             self.draw_wide_wings(p, tel, status, aero, snapshot.gap_behind_ms(now), settings);
         }
 
         let connection = snapshot.connection(now);
+        if is_shift {
+            if let Some(alert) = snapshot.race_alert(now) {
+                shift::draw_alert(p, alert.value, settings.halo.opacity);
+            }
+        }
         if connection != Connection::Live {
             p.text(
                 connection.label(),

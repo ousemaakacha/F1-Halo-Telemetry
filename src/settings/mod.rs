@@ -173,6 +173,7 @@ pub struct Settings {
     pub halo_profiles: BTreeMap<String, HaloProfile>,
     pub active_halo_profile: Option<String>,
     pub hide_halo_rear_view: bool,
+    pub hide_halo_side_view: bool,
     pub tyres: Layout,
     pub tyre_mode: TyreMode,
     pub temperature_min_c: f32,
@@ -196,6 +197,7 @@ impl Default for Settings {
             halo_profiles: BTreeMap::new(),
             active_halo_profile: None,
             hide_halo_rear_view: true,
+            hide_halo_side_view: true,
             tyres: Layout {
                 x: 45,
                 y: 600,
@@ -253,6 +255,7 @@ impl Settings {
     }
 
     pub fn effective_layouts(&self, visible: bool, rear_view: bool) -> [Layout; 2] {
+        let rear_view = rear_view && (self.hide_halo_rear_view || self.hide_halo_side_view);
         [
             self.halo.with_global_visibility(visible && !rear_view),
             self.tyres.with_global_visibility(visible),
@@ -320,8 +323,14 @@ impl Settings {
             return Ok(Self::default());
         }
         let content = fs::read_to_string(path).map_err(|e| format!("Reading settings: {e}"))?;
-        let value: Self =
+        let mut value: Self =
             serde_json::from_str(&content).map_err(|e| format!("Settings JSON: {e}"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| format!("Settings JSON: {e}"))?;
+        if json.get("hide_halo_side_view").is_none() {
+            // The legacy rear-view setting controlled both directions.
+            value.hide_halo_side_view = value.hide_halo_rear_view;
+        }
         value.validate()?;
         Ok(value)
     }
@@ -515,13 +524,90 @@ mod tests {
     }
 
     #[test]
-    fn rear_view_defaults_enabled_for_existing_profiles_and_saves_opt_out() {
-        let mut settings: Settings = serde_json::from_str("{}").unwrap();
+    fn disabled_view_filters_cannot_keep_halo_hidden() {
+        for global in [false, true] {
+            for halo in [false, true] {
+                for tyres in [false, true] {
+                    let settings = Settings {
+                        hide_halo_rear_view: false,
+                        hide_halo_side_view: false,
+                        halo: Layout {
+                            visible: halo,
+                            ..Layout::default()
+                        },
+                        tyres: Layout {
+                            visible: tyres,
+                            ..Layout::default()
+                        },
+                        ..Settings::default()
+                    };
+                    let layouts = settings.effective_layouts(global, true);
+                    assert_eq!(layouts[0].visible, global && halo);
+                    assert_eq!(layouts[1].visible, global && tyres);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn camera_hide_preferences_default_on_and_round_trip_independently() {
+        let settings: Settings = serde_json::from_str("{}").unwrap();
         assert!(settings.hide_halo_rear_view);
-        settings.hide_halo_rear_view = false;
-        let restored: Settings =
-            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
-        assert!(!restored.hide_halo_rear_view);
+        assert!(settings.hide_halo_side_view);
+        for rear in [false, true] {
+            for side in [false, true] {
+                let settings = Settings {
+                    hide_halo_rear_view: rear,
+                    hide_halo_side_view: side,
+                    ..Settings::default()
+                };
+                let restored: Settings =
+                    serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+                assert_eq!(restored.hide_halo_rear_view, rear);
+                assert_eq!(restored.hide_halo_side_view, side);
+            }
+        }
+    }
+
+    #[test]
+    fn loading_legacy_settings_keeps_the_combined_hide_preference() {
+        let path = std::env::temp_dir().join(format!("f1-camera-hide-{}.json", std::process::id()));
+        for (json, rear, side) in [
+            ("{}", true, true),
+            (r#"{"hide_halo_rear_view":true}"#, true, true),
+            (r#"{"hide_halo_rear_view":false}"#, false, false),
+            (
+                r#"{"hide_halo_rear_view":false,"hide_halo_side_view":true}"#,
+                false,
+                true,
+            ),
+            (
+                r#"{"hide_halo_rear_view":true,"hide_halo_side_view":false}"#,
+                true,
+                false,
+            ),
+            (r#"{"hide_halo_side_view":false}"#, true, false),
+        ] {
+            fs::write(&path, json).unwrap();
+            let settings = Settings::load(&path).unwrap();
+            assert_eq!(settings.hide_halo_rear_view, rear);
+            assert_eq!(settings.hide_halo_side_view, side);
+            settings.save(&path).unwrap();
+            let restored = Settings::load(&path).unwrap();
+            assert_eq!(restored.hide_halo_rear_view, rear);
+            assert_eq!(restored.hide_halo_side_view, side);
+        }
+        for invalid in [
+            "null",
+            r#"{"hide_halo_side_view":null}"#,
+            r#"{"hide_halo_rear_view":"invalid"}"#,
+            r#"{"hide_halo_rear_view":true,"hide_halo_rear_view":false}"#,
+            r#"{"hide_halo_side_view":true,"hide_halo_side_view":false}"#,
+        ] {
+            fs::write(&path, invalid).unwrap();
+            assert!(Settings::load(&path).is_err(), "{invalid}");
+        }
+        fs::remove_file(&path).unwrap();
     }
 
     #[test]

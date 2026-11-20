@@ -1,5 +1,6 @@
 use super::{
-    Aero, CarStatus, CarTelemetry, Damage, ErsCapacity, Header, LapHistory, Packet, SessionData,
+    Aero, CarStatus, CarTelemetry, Damage, ErsCapacity, GapReading, Header, LapHistory, Packet,
+    RaceAlert, SessionData, alerts::AlertTracker, gaps::GapTracker,
 };
 use std::time::{Duration, Instant};
 
@@ -77,6 +78,8 @@ pub struct Snapshot {
     pub current_lap: Option<Timed<u8>>,
     pub lap_history: Option<Timed<LapHistory>>,
     pub gap_behind: Option<Timed<u32>>,
+    pub race_gaps: Option<Timed<[Option<GapReading>; 2]>>,
+    pub race_alerts: [Option<Timed<RaceAlert>>; 5],
     pub session: Option<Timed<SessionData>>,
     pub formula: Option<u8>,
     pub participants: Option<u8>,
@@ -158,6 +161,12 @@ impl Snapshot {
             .map(|gap| gap.value)
     }
 
+    pub fn race_gaps(&self, now: Instant) -> [Option<GapReading>; 2] {
+        self.race_gaps
+            .filter(|gaps| self.on_track(now) && gaps.fresh(now, FAST_TTL))
+            .map_or([None; 2], |gaps| gaps.value)
+    }
+
     pub fn freshness_mask(&self, now: Instant) -> u16 {
         (self.driving(now) as u16)
             | ((self.status.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 1)
@@ -166,6 +175,8 @@ impl Snapshot {
             | ((self.connection(now) as u16) << 4)
             | ((self.lap_history.is_some_and(|x| x.fresh(now, HISTORY_TTL)) as u16) << 8)
             | ((self.gap_behind.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 9)
+            | ((self.race_gaps.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 10)
+            | (u16::from(self.race_alert(now).map_or(0, |alert| alert.value.code())) << 11)
     }
 }
 
@@ -183,10 +194,25 @@ pub struct TelemetryState {
     retired: [Option<u64>; 8],
     retired_next: usize,
     ended: bool,
+    gap_trackers: [GapTracker; 2],
+    alert_tracker: AlertTracker,
 }
 
 impl TelemetryState {
+    pub fn invalidate_race_alerts(&mut self, packet_id: u8) {
+        self.alert_tracker
+            .invalidate(packet_id, &mut self.snapshot.race_alerts);
+    }
+
+    pub fn invalidate_race_gaps(&mut self) {
+        self.snapshot.race_gaps = None;
+        self.gap_trackers = Default::default();
+    }
+
     fn clear_values(&mut self) {
+        self.invalidate_race_gaps();
+        self.snapshot.race_alerts = [None; 5];
+        self.alert_tracker = AlertTracker::default();
         self.snapshot.ers_capacity = None;
         self.snapshot.telemetry = None;
         self.snapshot.status = None;
@@ -266,6 +292,22 @@ impl TelemetryState {
         if let Some(previous) = self.sequence[id] {
             if h.overall_frame == previous {
                 self.snapshot.counters.duplicates += 1;
+                // Different event codes can share a frame; deduplicate new notices separately.
+                if let Packet::Event(_, code) = packet {
+                    if !self.ended
+                        && self.snapshot.on_track(now)
+                        && !self
+                            .high
+                            .is_some_and(|v| serial_newer(v.overall_frame, h.overall_frame))
+                    {
+                        return self.alert_tracker.event(
+                            code,
+                            h,
+                            now,
+                            &mut self.snapshot.race_alerts,
+                        );
+                    }
+                }
                 return false;
             }
             if !serial_newer(h.overall_frame, previous) {
@@ -294,14 +336,39 @@ impl TelemetryState {
                 })
             };
         }
+        let alert_lag = self
+            .high
+            .map_or(0.0, |v| (v.session_time - h.session_time).max(0.0));
         match packet {
             Packet::Telemetry(_, v) if !self.ended => self.snapshot.telemetry = timed!(v),
-            Packet::Status(_, v) => self.snapshot.status = timed!(v),
+            Packet::Status(_, v) => {
+                self.snapshot.status = timed!(v);
+                if alert_lag <= FAST_TTL.as_secs_f32() {
+                    self.alert_tracker.flag(
+                        v.fia_flag,
+                        now,
+                        h.overall_frame,
+                        &mut self.snapshot.race_alerts,
+                    );
+                } else {
+                    self.invalidate_race_alerts(7);
+                }
+            }
             Packet::Damage(_, v) => self.snapshot.damage = timed!(v),
             Packet::Aero(_, v) => self.snapshot.aero = timed!(v),
             Packet::Session(_, session) => {
                 self.snapshot.session = timed!(session);
                 self.snapshot.formula = Some(session.formula);
+                if alert_lag <= DAMAGE_TTL.as_secs_f32() {
+                    self.alert_tracker.safety(
+                        session.safety_car,
+                        now,
+                        h.overall_frame,
+                        &mut self.snapshot.race_alerts,
+                    );
+                } else {
+                    self.invalidate_race_alerts(1);
+                }
             }
             Packet::Lap(_, lap) if !self.ended => {
                 self.snapshot.lap_status = timed!(lap.result_status);
@@ -312,6 +379,20 @@ impl TelemetryState {
                     received: now,
                     overall_frame: h.overall_frame,
                 });
+                let readings = std::array::from_fn(|i| {
+                    self.gap_trackers[i].update(lap.race_gaps[i], h.session_time, now)
+                });
+                self.snapshot.race_gaps = timed!(readings);
+                if alert_lag <= FAST_TTL.as_secs_f32() {
+                    self.alert_tracker.control(
+                        lap.race_control,
+                        now,
+                        h.overall_frame,
+                        &mut self.snapshot.race_alerts,
+                    );
+                } else {
+                    self.invalidate_race_alerts(2);
+                }
             }
             Packet::History(_, history) if !self.ended => {
                 self.snapshot.lap_history = timed!(history)
@@ -329,9 +410,23 @@ impl TelemetryState {
                     self.ended = false;
                 }
                 // Header rollback is authoritative; a delayed FLBK event must not clear new data twice.
-                _ => (),
+                _ => {
+                    if !self.ended
+                        && self.snapshot.on_track(now)
+                        && !self
+                            .high
+                            .is_some_and(|v| serial_newer(v.overall_frame, h.overall_frame))
+                    {
+                        self.alert_tracker
+                            .event(code, h, now, &mut self.snapshot.race_alerts);
+                    }
+                }
             },
             _ => (),
+        }
+        if !self.snapshot.on_track(now) {
+            self.invalidate_race_gaps();
+            self.alert_tracker.inactive(&mut self.snapshot.race_alerts);
         }
         true
     }

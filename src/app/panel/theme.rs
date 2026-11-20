@@ -309,7 +309,7 @@ impl Theme {
             let selected = nav.is_some_and(|page| page == theme.page.get());
             let primary = id == APPLY || selected;
             let checked = SendMessageW(hwnd, BM_GETCHECK, None, None).0 == 1;
-            let toggle = matches!(id, DEMO | HALO | TYRES | REAR_VIEW);
+            let toggle = matches!(id, DEMO | HALO | TYRES | REAR_VIEW | SIDE_VIEW);
             let state = SendMessageW(hwnd, BM_GETSTATE, None, None).0;
             let pressed = state & 4 != 0;
             let hover = theme.hot.get() == Some(hwnd);
@@ -668,14 +668,14 @@ impl Theme {
             p.line(916, 345, 1156, 345, LINE);
             p.text("BEHAVIOUR", (916, 369, 240, 20), 1, TEXT, DT_SINGLELINE);
             p.text(
-                "Use Apply and save to apply changes\nto the fields and switches.",
-                (916, 497, 242, 44),
+                "View hiding saves immediately.\nUse Apply for other changes.",
+                (916, 533, 242, 32),
                 1,
                 MUTED,
                 DT_WORDBREAK,
             );
-            p.line(916, 556, 1156, 556, LINE);
-            p.text("SESSION", (916, 578, 240, 20), 1, TEXT, DT_SINGLELINE);
+            p.line(916, 576, 1156, 576, LINE);
+            p.text("SESSION", (916, 590, 240, 20), 1, TEXT, DT_SINGLELINE);
             p.line(244, 700, 864, 700, LINE);
             let _ = RestoreDC(dc, saved);
             let _ = EndPaint(hwnd, &ps);

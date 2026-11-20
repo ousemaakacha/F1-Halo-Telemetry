@@ -35,7 +35,35 @@ timestamp separato con scadenza a 500 ms. Nessun inseguitore attivo e guida
 inattiva producono `--`. Reset, cambio sorgente/sessione e flashback svuotano
 anche questi campi. La diagnostica esporta `gap_behind_ms`.
 
+Per la zona sinistra di Shift, Lap Data conserva inoltre le identità delle due
+auto adiacenti in classifica e il delta anteriore della vettura locale. Questi
+dati sono separati dal distacco posteriore usato dagli altri modelli. Il thread
+ricezione confronta intervalli della stessa auto su finestre di almeno un
+secondo, sia nel tempo di gioco sia nei timestamp di ricezione, con una soglia
+di 50 ms. Campioni duplicati o riordinati non aggiornano lo storico; tempo
+fermo, intervalli fra campioni superiori a 500 ms, auto diversa, dato assente o
+non valido e guida inattiva azzerano l'andamento. Il renderer legge soltanto
+valori già calcolati e ne verifica la scadenza a 500 ms.
+
 ## Rendering e composizione
+
+Gli avvisi Shift sono calcolati sul thread UDP da `telemetry/alerts` e copiati
+nello snapshot come valori temporizzati. Si conservano separatamente bandiere
+locali, SC/VSC, penalità, warning ed eventi rossa/scacchi; viene mostrato il
+messaggio valido di priorità maggiore. I cambi di stato avviano cinque secondi
+di visibilità massima; ricevere lo stesso stato non rinnova il timer.
+La cessazione o scadenza del dato sorgente invalida il messaggio. Gli aumenti
+dei contatori richiedono un campione precedente entro 500 ms; nessuna differenza
+viene calcolata da dati assenti. Le notifiche ignorano inoltre campioni già
+vecchi nel tempo di gioco rispetto all'header più recente. Pausa, spettatore,
+garage, reset e cambi timeline azzerano gli avvisi.
+
+Il renderer aggiunge soltanto il banner Shift nella fascia libera sotto il
+quadrante e lascia il precedente stato di connessione nella sua posizione.
+La maschera di aggiornamento include il tipo di avviso attivo; il timer UI
+si sveglia alla scadenza del messaggio o della Session da cui dipende.
+Gli eventi rossa/scacchi si deduplicano per tipo e frame anche se un diverso
+evento occupa lo stesso frame, senza cambiare i dati dei modelli precedenti.
 
 Il mini HUD pneumatici usa `assets/tyre-car-transparent.png`, incorporato
 nell'eseguibile. Il fondo trasparente lascia visibile soltanto il fondo uniforme
@@ -45,8 +73,28 @@ per device. Direct2D riutilizza la bitmap, conserva le proporzioni verticali
 e la ricrea insieme alle altre risorse grafiche dopo un reset.
 
 `HaloModel` seleziona Wide, Classic, Modern, Carbon o Shift sullo stesso canvas
-1000 × 300. Shift enfatizza marcia, RPM e luci di cambiata nel quadrante
-centrale; le zone laterali mantengono il layout Wide.
+1000 × 300. Shift riusa direttamente `Modern::draw_frame` per il materiale,
+il bordo e l'arco superiore, senza modificare il renderer Modern originale.
+I riquadri dedicati hanno gli stessi limiti angolari esterni, da 12° a 28°
+su entrambi i lati del centro: due colonne AHEAD/BEHIND a sinistra e tre
+ERS/Straight/Fuel a destra. Le tre righe sono a profondità uguali; testi e
+angoli arrotondati seguono la stessa circonferenza da 710 unità di Modern.
+I pedali sono compatti e speculari e rientrano nella fascia. La marcia centrale
+è ingrandita e sotto mostra soltanto le due velocità in km/h e mph; ERS e
+modalità restano esclusivamente nella colonna destra. Gli mph derivano dal
+medesimo `speed_kmh` dividendo per 1.609344; nessun dato aggiuntivo o valore
+predefinito viene introdotto. Il numero RPM è omesso. I 15 segmenti di Shift
+usano `rpm / max_rpm`, così la tacca gialla 10k corrisponde esattamente a
+10.000 RPM sulla stessa scala. Senza limite valido rimangono i bit LED del
+gioco e la tacca è omessa. Dalla soglia fissa di 12.500 RPM, nelle
+marce 1–8, marcia e anello alternano il rosso ogni 100 ms con una fase comune
+basata su `Instant`; la tacca gialla resta leggibile anche durante il lampeggio.
+Gli aggiornamenti usano il normale ciclo di rendering della telemetria.
+I valori riusano i filtri a 500 ms e
+gli helper comuni per percentuale ERS, modalità, stato/distanza SM e segno Fuel.
+In assenza di capacità ERS si mostrano i MJ ricevuti, senza ricavarla dal limite
+di recupero per giro. Le sottolineature di attenzione sono statiche e locali;
+nessun avviso temporaneo aggiuntivo. Geometrie e curve sono in cache.
 Modern usa una fascia continua con estremità curve e un gradiente Direct2D;
 il brush viene creato con la superficie e riutilizzato, compresi i reset del
 device. Geometrie e arco RPM restano in cache. Il quadrante condiviso viene
@@ -147,8 +195,18 @@ globale, indipendente da guida, focus, Edit, Demo e filtro dello stick destro.
 
 La sospensione è un filtro temporaneo soltanto sul layout Halo. Draw, applicazione
 impostazioni e hotkey usano lo stesso filtro; i layout salvati e il mini HUD
-pneumatici rimangono indipendenti. `hide_halo_rear_view` è attivo per default anche
-nei profili precedenti, disattivabile dal pannello. La diagnostica esporta stato
+pneumatici rimangono indipendenti. `hide_halo_rear_view` abilita soltanto l'asse
+verso il basso; `hide_halo_side_view` abilita soltanto l'asse orizzontale.
+I due toggle del pannello vengono salvati separatamente e gli assi disabilitati
+sono neutralizzati prima di applicare soglie e isteresi. Cambiare i toggle con
+Applica azzera lo stato di sospensione precedente. I clic sui due toggle si
+applicano e si salvano subito, senza leggere o applicare gli altri campi del
+pannello; un errore ripristina i toggle e il layout precedenti. Disattivare
+entrambi neutralizza il filtro anche nel calcolo dei layout, senza dipendere
+dal precedente stato di sospensione. Entrambi sono attivi per
+default; `Settings::load` copia il vecchio valore comune nel toggle laterale
+quando il nuovo campo manca, conservando anche le precedenti disattivazioni.
+La diagnostica esporta `rear_view_enabled`, `side_view_enabled`, stato
 del filtro, registrazione Raw Input, conteggio campioni, sorgente e ultimi assi
 (`right_stick_down` e `right_stick_horizontal`).
 Non viene dedotta la visuale dai flag UDP: il filtro segue il comando concordato

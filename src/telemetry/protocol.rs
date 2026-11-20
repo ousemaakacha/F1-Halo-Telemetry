@@ -12,12 +12,29 @@ pub const AERO_SIZE: usize = 269;
 pub const HISTORY_SIZE: usize = 1460;
 pub const LAP_SIZE: usize = 1399;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CarGap {
+    pub car_index: u8,
+    pub millis: u32,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LapData {
     pub result_status: u8,
     pub driver_status: u8,
     pub current_lap: u8,
     pub gap_behind_ms: Option<u32>,
+    /// Active race neighbours, ahead then behind, with identity for trend tracking.
+    pub race_gaps: [Option<CarGap>; 2],
+    pub race_control: RaceControl,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RaceControl {
+    pub penalty_seconds: u8,
+    pub warnings: u8,
+    pub drive_through: u8,
+    pub stop_go: u8,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -26,6 +43,7 @@ pub struct SessionData {
     pub formula: u8,
     pub session_type: u8,
     pub spectating: bool,
+    pub safety_car: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -75,6 +93,7 @@ pub struct CarStatus {
     pub deploy_mode: u8,
     pub harvest_limit_joules: f32,
     pub paused: bool,
+    pub fia_flag: Option<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -285,6 +304,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
                         "ersHarvestLimitPerLap",
                     )?,
                     paused: boolean(c[58], "networkPaused")?,
+                    fia_flag: (c[28] <= 3).then_some(c[28]),
                 },
             )
         }
@@ -318,6 +338,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
                 formula: b[HEADER_SIZE + 8],
                 session_type: b[HEADER_SIZE + 6],
                 spectating: boolean(b[HEADER_SIZE + 15], "isSpectating")?,
+                safety_car: (b[HEADER_SIZE + 124] <= 3).then_some(b[HEADER_SIZE + 124]),
             },
         ),
         2 => {
@@ -349,6 +370,33 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
                     gap_behind_ms = Some(u32::from(behind[16]) * 60_000 + u32::from(millis));
                 }
             }
+            let neighbour = |target: u8, interval: Option<u32>| {
+                let mut matches = cars
+                    .chunks_exact(57)
+                    .enumerate()
+                    .filter(|(_, other)| other[32] == target && other[45] == 2);
+                let (car_index, other) = matches.next()?;
+                if matches.next().is_some() || !(1..=4).contains(&other[44]) {
+                    return None;
+                }
+                Some(CarGap {
+                    car_index: car_index as u8,
+                    millis: interval?,
+                })
+            };
+            let mut race_gaps = [None; 2];
+            if result == 2 && (1..=4).contains(&driver_status) {
+                if position > 1 {
+                    let millis = u16_at(car, 14);
+                    // A bad front interval must not discard the existing rear-gap data.
+                    let interval = (millis < 60_000)
+                        .then_some(u32::from(car[16]) * 60_000 + u32::from(millis));
+                    race_gaps[0] = neighbour(position - 1, interval);
+                }
+                if (1..CAR_COUNT as u8).contains(&position) {
+                    race_gaps[1] = neighbour(position + 1, gap_behind_ms);
+                }
+            }
             Packet::Lap(
                 h,
                 LapData {
@@ -356,6 +404,13 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
                     driver_status,
                     current_lap: car[33],
                     gap_behind_ms,
+                    race_gaps,
+                    race_control: RaceControl {
+                        penalty_seconds: car[38],
+                        warnings: car[39],
+                        drive_through: car[41],
+                        stop_go: car[42],
+                    },
                 },
             )
         }

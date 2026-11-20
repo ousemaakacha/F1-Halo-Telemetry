@@ -62,6 +62,51 @@ fn lap_wire(player: u8, frame: u32, position: u8, behind: Option<(u8, u32)>) -> 
     bytes
 }
 
+fn race_lap_wire(
+    player: u8,
+    frame: u32,
+    ahead: Option<(u8, u32)>,
+    behind: Option<(u8, u32)>,
+) -> Vec<u8> {
+    let mut bytes = lap_wire(player, frame, 6, behind);
+    let local = 29 + 57 * player as usize;
+    bytes[local + 44] = 4;
+    if let Some((index, millis)) = ahead {
+        assert_ne!(index, player);
+        let offset = 29 + 57 * index as usize;
+        bytes[offset + 32] = 5;
+        bytes[offset + 44] = 4;
+        bytes[offset + 45] = 2;
+        bytes[local + 14..local + 16].copy_from_slice(&((millis % 60_000) as u16).to_le_bytes());
+        bytes[local + 16] = (millis / 60_000) as u8;
+    }
+    if let Some((index, _)) = behind {
+        bytes[29 + 57 * index as usize + 44] = 4;
+    }
+    bytes
+}
+
+fn race_sample(
+    state: &mut TelemetryState,
+    start: Instant,
+    tick: u32,
+    ahead: Option<(u8, u32)>,
+    behind: Option<(u8, u32)>,
+) -> Instant {
+    let now = start + Duration::from_millis(u64::from(tick) * 100);
+    let frame = 600 + tick * 6;
+    let mut session = wire(1, 23, frame);
+    session[29 + 6] = 10;
+    for bytes in [
+        session,
+        wire(6, 23, frame),
+        race_lap_wire(23, frame, ahead, behind),
+    ] {
+        assert!(state.apply(parse(&bytes).unwrap(), now));
+    }
+    now
+}
+
 fn track_state(now: Instant, player: u8, session_type: u8, driver_status: u8) -> TelemetryState {
     let mut session = wire(1, player, 60);
     session[29 + 6] = session_type;
@@ -73,6 +118,185 @@ fn track_state(now: Instant, player: u8, session_type: u8, driver_status: u8) ->
         assert!(state.apply(parse(&bytes).unwrap(), now));
     }
     state
+}
+
+#[test]
+fn race_gaps_read_both_neighbours_with_their_identity_and_millisecond_precision() {
+    for (player, ahead, behind) in [(0, 15, 23), (23, 0, 4), (10, 20, 0)] {
+        for millis in [0, 1_234, 61_567, 15_359_999] {
+            let bytes = race_lap_wire(player, 600, Some((ahead, millis)), Some((behind, 2_345)));
+            let Packet::Lap(_, lap) = parse(&bytes).unwrap() else {
+                panic!()
+            };
+            assert_eq!(
+                lap.race_gaps,
+                [
+                    Some(CarGap {
+                        car_index: ahead,
+                        millis
+                    }),
+                    Some(CarGap {
+                        car_index: behind,
+                        millis: 2_345
+                    }),
+                ]
+            );
+            assert_eq!(lap.gap_behind_ms, Some(2_345));
+        }
+    }
+}
+
+#[test]
+fn race_gaps_reject_inactive_ambiguous_and_invalid_neighbours_without_changing_legacy_rear_data() {
+    let base = race_lap_wire(23, 600, Some((0, 1_234)), Some((4, 2_345)));
+    for side in 0..2 {
+        let index = if side == 0 { 0 } else { 4 };
+        for field in [44, 45] {
+            let mut bytes = base.clone();
+            bytes[29 + 57 * index + field] = 0;
+            let Packet::Lap(_, lap) = parse(&bytes).unwrap() else {
+                panic!()
+            };
+            assert_eq!(lap.race_gaps[side], None);
+            assert!(lap.race_gaps[1 - side].is_some());
+        }
+        let mut bytes = base.clone();
+        let duplicate = 29 + 57 * 11;
+        bytes[duplicate + 32] = if side == 0 { 5 } else { 7 };
+        bytes[duplicate + 44] = 4;
+        bytes[duplicate + 45] = 2;
+        let Packet::Lap(_, lap) = parse(&bytes).unwrap() else {
+            panic!()
+        };
+        assert_eq!(lap.race_gaps[side], None);
+        assert_eq!(lap.gap_behind_ms, Some(2_345));
+    }
+    let mut bytes = base.clone();
+    let local = 29 + 57 * 23;
+    bytes[local + 14..local + 16].copy_from_slice(&60_000u16.to_le_bytes());
+    let Packet::Lap(_, lap) = parse(&bytes).unwrap() else {
+        panic!()
+    };
+    assert_eq!(lap.race_gaps[0], None);
+    assert_eq!(lap.race_gaps[1].unwrap().millis, 2_345);
+    assert_eq!(lap.gap_behind_ms, Some(2_345));
+    for position in [0, 1, 24] {
+        let mut bytes = base.clone();
+        bytes[local + 32] = position;
+        let Packet::Lap(_, lap) = parse(&bytes).unwrap() else {
+            panic!()
+        };
+        assert_eq!(lap.race_gaps, [None; 2]);
+    }
+}
+
+#[test]
+fn race_gap_trends_need_a_full_second_and_ignore_small_variations() {
+    let start = Instant::now();
+    let mut state = TelemetryState::default();
+    for tick in 0..=24 {
+        let ahead = if tick <= 12 {
+            3_000 - tick * 20
+        } else {
+            2_800 + tick % 2 * 10
+        };
+        let behind = if tick <= 12 {
+            2_000 + tick * 20
+        } else {
+            2_200 + tick % 2 * 10
+        };
+        let now = race_sample(&mut state, start, tick, Some((0, ahead)), Some((4, behind)));
+        let gaps = state.snapshot.race_gaps(now).map(Option::unwrap);
+        assert_eq!([gaps[0].millis, gaps[1].millis], [ahead, behind]);
+        if tick < 10 || tick == 24 {
+            assert_eq!(gaps.map(|gap| gap.trend), [GapTrend::Neutral; 2]);
+        } else if tick == 12 {
+            assert_eq!(gaps[0].trend, GapTrend::Shrinking);
+            assert_eq!(gaps[1].trend, GapTrend::Growing);
+        }
+    }
+}
+
+#[test]
+fn race_gap_history_resets_after_missing_data_opponent_changes_pause_and_silence() {
+    let start = Instant::now();
+    let mut state = TelemetryState::default();
+    for tick in 0..=12 {
+        race_sample(
+            &mut state,
+            start,
+            tick,
+            Some((0, 3_000 - tick * 20)),
+            Some((4, 2_000)),
+        );
+    }
+    for (tick, ahead) in [(13, Some((1, 900))), (14, None), (15, Some((1, 700)))] {
+        let now = race_sample(&mut state, start, tick, ahead, Some((4, 2_000)));
+        assert_eq!(
+            state.snapshot.race_gaps(now)[0].map(|gap| gap.trend),
+            ahead.map(|_| GapTrend::Neutral)
+        );
+    }
+    let mut paused = wire(1, 23, 696);
+    paused[29 + 6] = 10;
+    paused[29 + 14] = 1;
+    let now = start + Duration::from_millis(1_600);
+    assert!(state.apply(parse(&paused).unwrap(), now));
+    assert_eq!(state.snapshot.race_gaps(now), [None; 2]);
+    for tick in [17, 23] {
+        let now = race_sample(&mut state, start, tick, Some((1, 400)), Some((4, 2_000)));
+        assert_eq!(
+            state.snapshot.race_gaps(now).map(|gap| gap.unwrap().trend),
+            [GapTrend::Neutral; 2]
+        );
+    }
+    let expired = start + Duration::from_millis(2_801);
+    assert_eq!(state.snapshot.race_gaps(expired), [None; 2]);
+    assert_eq!(state.snapshot.freshness_mask(expired) & (1 << 10), 0);
+}
+
+#[test]
+fn race_gap_trends_do_not_use_duplicate_frames_frozen_time_or_old_timelines() {
+    let start = Instant::now();
+    let mut state = TelemetryState::default();
+    for tick in 0..=12 {
+        race_sample(
+            &mut state,
+            start,
+            tick,
+            Some((0, 3_000 - tick * 20)),
+            Some((4, 2_000)),
+        );
+    }
+    let now = start + Duration::from_millis(1_300);
+    for frame in [672, 671] {
+        let bytes = race_lap_wire(23, frame, Some((0, 9_000)), None);
+        assert!(!state.apply(parse(&bytes).unwrap(), now));
+        assert_eq!(state.snapshot.race_gaps(now)[0].unwrap().millis, 2_760);
+    }
+    let mut frozen = race_lap_wire(23, 678, Some((0, 2_000)), Some((4, 2_000)));
+    frozen[15..19].copy_from_slice(&(672.0f32 / 60.0).to_le_bytes());
+    assert!(state.apply(parse(&frozen).unwrap(), now));
+    assert_eq!(
+        state.snapshot.race_gaps(now)[0].unwrap().trend,
+        GapTrend::Neutral
+    );
+    let mut rollback = wire(6, 23, 600);
+    rollback[23..27].copy_from_slice(&679u32.to_le_bytes());
+    assert!(state.apply(parse(&rollback).unwrap(), now));
+    assert!(state.snapshot.race_gaps.is_none());
+    let now = race_sample(&mut state, start, 14, Some((0, 900)), Some((4, 2_000)));
+    assert_eq!(
+        state.snapshot.race_gaps(now)[0].unwrap().trend,
+        GapTrend::Neutral
+    );
+    state.invalidate_race_gaps();
+    assert_eq!(state.snapshot.race_gaps(now), [None; 2]);
+    let now = race_sample(&mut state, start, 15, Some((0, 500)), Some((4, 2_000)));
+    assert_eq!(
+        state.snapshot.race_gaps(now)[0].unwrap().trend,
+        GapTrend::Neutral
+    );
 }
 
 #[test]
@@ -92,7 +316,8 @@ fn visibility_reads_session_and_local_driver_fields_and_validates_booleans() {
                 paused: true,
                 formula: 13,
                 session_type: 18,
-                spectating: true
+                spectating: true,
+                safety_car: Some(0),
             }
         );
         for (offset, field) in [(43, "gamePaused"), (44, "isSpectating")] {

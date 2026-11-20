@@ -92,18 +92,27 @@ sfiorare il touchpad o spostare il dito tenendo premuto non ripete il comando.
 Il DualSense deve essere accessibile tramite HID: l'app legge le coordinate nei
 report USB/Bluetooth completi e ne richiede l'attivazione al collegamento.
 I soli report XInput virtuali non distinguono le due metà del touchpad.
-Il comando funziona anche con HUD già nascosti e con **Hide Halo: rear / sides**
-disattivato. Una pressione mantenuta non lo ripete; riconnessione e cambio
+Il comando funziona anche con HUD già nascosti e con entrambi i toggle
+**Hide Halo** disattivati. Una pressione mantenuta non lo ripete; riconnessione e cambio
 controller azzerano la sequenza. Come la scorciatoia da tastiera, funziona anche
 quando il gioco non è in primo piano. I tasti restano disponibili al gioco.
 
-**Hide Halo: rear / sides**, attivo per impostazione iniziale, usa lo **stick
-destro del controller PS5 verso il basso, a destra o a sinistra**, senza premere
-R3: Halo scompare mentre guardi indietro o ai lati e torna quando riporti lo
-stick al centro. Il mini HUD pneumatici resta visibile secondo le sue preferenze.
+Due toggle indipendenti usano lo **stick destro**, senza premere R3:
+
+- **Hide Halo in rear view**: nasconde Halo quando lo stick va verso il basso
+  per guardare indietro.
+- **Hide Halo in side views**: nasconde Halo quando lo stick va a destra o
+  a sinistra per guardare ai lati.
+
+Halo torna quando riporti lo stick al centro. Disattiva il toggle della direzione
+affetta da drift: quell'asse viene ignorato anche se l'altro toggle resta attivo.
+Il mini HUD pneumatici resta visibile secondo le sue preferenze.
 Funziona con tutti i modelli Halo durante la guida, con F1 25
-in primo piano; in Demo ed Edit resta disattivato. La casella nel pannello,
-seguita da **Apply and save**, permette di disabilitarlo. Non cambia le
+in primo piano; in Demo ed Edit il filtro resta disattivato. Le due caselle
+nel pannello si applicano e si salvano subito, senza **Apply and save**.
+Disattivarle entrambe annulla anche un precedente occultamento da stick.
+Entrambe sono attive nelle nuove configurazioni; caricando una vecchia
+configurazione, entrambe ereditano il precedente valore comune. Non cambia le
 preferenze di visibilità manuale: un Halo già nascosto rimane nascosto.
 
 Supporta DualSense e DualShock 4 USB/Bluetooth, controller Xbox tramite XInput
@@ -146,9 +155,47 @@ eliminarlo. Premi **Apply and save**. Le percentuali vengono ripristinate al
 riavvio; i file impostazioni precedenti restano compatibili.
 
 **Halo model** permette di scegliere **Wide**, **Classic**, **modern**,
-**Carbon (Halo + Tyres)** oppure **Shift**. Shift mette la marcia in primo piano
-nella zona centrale, con RPM e luci di cambiata ben leggibili e velocità
-secondaria; le zone laterali seguono Wide. Carbon applica insieme i due nuovi design: Halo ad
+**Carbon (Halo + Tyres)** oppure **Shift**. Shift usa il fondo e il bordo di
+Modern con una disposizione dedicata e simmetrica. Al centro la marcia grande
+è l'informazione principale, con velocità in **km/h e mph** e anello contagiri;
+il valore numerico RPM non viene mostrato. A sinistra **AHEAD** e **BEHIND** mostrano in
+secondi il distacco dalle auto immediatamente davanti e dietro in classifica.
+La freccia verso il basso indica un distacco in riduzione, quella verso l'alto
+un distacco in aumento, con lo stesso significato per entrambe le auto.
+L'andamento richiede almeno un secondo di campioni validi e continui della
+stessa auto: variazioni inferiori a 50 ms restano neutre. Un trattino indica
+andamento non determinato o stabile; `--` indica distacco non disponibile o
+scaduto. A destra, Shift mostra livello e modalità ERS, Straight Mode con la
+distanza disponibile e margine carburante in **LAPS**. La percentuale ERS usa
+la capacità già nota all'app; senza capacità viene mostrata l'energia in MJ.
+ERS e modalità sono mostrati soltanto nel riquadro destro di Shift. Gli mph
+sono ricavati dallo stesso campione km/h dividendo per 1.609344 e arrotondando
+all'intero; entrambe le velocità mostrano `--` se la telemetria manca o scade.
+Dati assenti o scaduti dopo 500 ms diventano `--`. Le evidenziazioni sono
+statiche e locali: rosso per ERS esaurito e margine carburante negativo,
+colore accento per BOOST e SM READY, verde per SM ON, secondo i colori
+configurati nell'app.
+I due riquadri sinistri e i tre destri hanno uguali ingombri esterni e righe
+allineate alla curva; i pedali sono speculari, con barre più alte ed etichette
+**BRK/THR** abbassate all'interno della fascia. In Shift l'anello usa i giri
+effettivi rispetto al limite motore ricevuto: una tacca gialla **10k** indica
+10.000 giri per la partenza da fermo. Marcia e anello lampeggiano insieme in
+rosso a 5 Hz a partire dalla soglia fissa di **12.500 RPM**.
+L'avviso vale per le marce 1–8 e si spegne quando i giri scendono o i dati
+scadono. Senza limite RPM valido l'anello segue i LED del gioco e la tacca
+gialla non viene mostrata.
+La marcia e gli indicatori centrali conservano il centro del layout salvato.
+
+Solo Shift aggiunge una fascia di avvisi temporanei sotto il quadrante:
+bandiere FIA verde/blu/gialla, bandiera rossa/scacchi dagli eventi ufficiali,
+Safety Car/VSC e aumenti di penalità o avvertimenti del gioco. Un avviso dura
+al massimo cinque secondi, senza rinnovarsi a ogni pacchetto; stato terminato,
+dati scaduti, pausa o cambio sessione lo rimuovono prima. I messaggi di sicurezza
+hanno precedenza. Penalità e warning richiedono un confronto con un campione
+recente: i totali già presenti all'avvio non vengono notificati come nuovi.
+Non si deducono danni, cause delle penalità o rientri SC non forniti dai dati
+decodificati. Dettagli e limiti: [contratto UDP](docs/PROTOCOL.md).
+Carbon applica insieme i due nuovi design: Halo ad
 arco con quadrante circolare, bordo rosso, trama carbonio e caratteri corsivi;
 pannello pneumatici coordinato con monoposto argento/nero/rosso, usura media,
 barre segmentate e temperature Surface/Inner. Tutti i valori sono live;
@@ -210,7 +257,8 @@ a sinistra dei pedali mostra il margine carburante live del MFD rispetto alla
 distanza di gara rimanente, con segno e un decimale: **+ 2.3** oppure **- 0.8**.
 Il valore segue consumo e risparmio, senza sottrarre nuovamente i giri gara.
 Quando i dati non sono disponibili o recenti compare **--**.
-I 15 segmenti luminosi del quadrante conservano i bit dei LED di cambiata.
+I 15 segmenti luminosi del quadrante conservano i bit dei LED di cambiata,
+tranne in Shift, che usa la scala RPM descritta sopra.
 Il colore iniziale degli archi è arancione ed è modificabile nel pannello.
 
 Velocità in km/h, marcia immediata R/N/1–8, pedali effettivi, RPM e massimo RPM
@@ -369,6 +417,17 @@ Per acquisire la diagnostica di una sessione reale:
 ```powershell
 .\target\release\f1-halo-telemetry.exe --no-settings --quit-after 120 --diagnostics real-session.json
 ```
+
+L'app registra automaticamente avvio, uscita, cambi di visibilità, perdita del
+controller ed errori grafici in `%LOCALAPPDATA%\F1HaloTelemetry\session-events.jsonl`.
+Ogni riga contiene ora Unix in millisecondi, tempo dall'avvio, età dei pacchetti
+UDP, flag pausa/sessione, stato del controller e contatori degli errori.
+Questo permette di distinguere un'interruzione della telemetria da un comando
+del controller o da un ripristino grafico anche dopo una scomparsa breve.
+Il file ruota a 256 KiB, conservando anche `session-events.previous.jsonl`;
+si scrive soltanto in corrispondenza degli eventi. Con `--config`, i registri
+si trovano accanto al file impostazioni scelto. **Export diagnostics** riporta
+anche il percorso del registro e gli eventuali errori di scrittura.
 
 La latenza misurata va dal ritorno di `recv_from` all'invio `Present`: non include
 tempo nel kernel prima della lettura, scansione del monitor o latenza ottica.

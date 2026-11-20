@@ -46,6 +46,7 @@ const BATTERY_STATUS: u16 = 143;
 pub const HALO_MODEL: u16 = 144;
 pub const REAR_VIEW: u16 = 145;
 pub const HALO_PROFILE: u16 = 146;
+pub const SIDE_VIEW: u16 = 147;
 pub const COLOUR: u16 = 150;
 pub const APPLY: u16 = 201;
 pub const EDIT: u16 = 202;
@@ -347,19 +348,20 @@ impl Panel {
             &["60 FPS", "120 FPS", "Monitor refresh"],
         )?;
         self.button("Demo (simulated data)", DEMO, 916, 399, 240, true)?;
-        self.button("Hide Halo: rear / sides", REAR_VIEW, 916, 448, 240, true)?;
+        self.button("Hide Halo in rear view", REAR_VIEW, 916, 448, 240, true)?;
+        self.button("Hide Halo in side views", SIDE_VIEW, 916, 489, 240, true)?;
         self.control(
             w!("STATIC"),
             "Waiting for UDP",
             CONNECTION_STATUS,
-            (916, 611, 240, 32),
+            (916, 613, 240, 32),
             WINDOW_STYLE(0),
         )?;
         self.control(
             w!("STATIC"),
             "",
             RUNTIME_STATUS,
-            (916, 651, 240, 40),
+            (916, 653, 240, 40),
             WINDOW_STYLE(0),
         )?;
         self.control(
@@ -592,6 +594,7 @@ impl Panel {
         self.set(PORT, &s.port.to_string());
         self.check(DEMO, demo);
         self.check(REAR_VIEW, s.hide_halo_rear_view);
+        self.check(SIDE_VIEW, s.hide_halo_side_view);
         self.populate_layout(s);
         self.populate_profiles(s);
         self.select(
@@ -717,6 +720,7 @@ impl Panel {
         };
         let mut s = old.clone();
         s.hide_halo_rear_view = self.checked(REAR_VIEW);
+        s.hide_halo_side_view = self.checked(SIDE_VIEW);
         s.halo_model = match self.selected(HALO_MODEL) {
             0 => HaloModel::Wide,
             1 => HaloModel::Classic,
@@ -1385,9 +1389,30 @@ mod tests {
         assert_eq!(read.colours.accent, [100, 221, 245]);
         assert_eq!(read.hotkey, "Ctrl+Shift+F9");
         assert!(!read.hide_halo_rear_view);
+        assert!(read.hide_halo_side_view);
         assert_eq!(read.halo.scale, settings.halo.scale);
         assert_eq!(read.tyres.opacity, settings.tyres.opacity);
         assert_opacity_controls_validate_percent_and_keep_unedited_precision(&panel);
+        for rear in [false, true] {
+            for side in [false, true] {
+                let settings = Settings {
+                    hide_halo_rear_view: rear,
+                    hide_halo_side_view: side,
+                    ..Settings::default()
+                };
+                panel.populate(&settings, false);
+                assert_eq!(panel.checked(REAR_VIEW), rear);
+                assert_eq!(panel.checked(SIDE_VIEW), side);
+                panel.check(REAR_VIEW, !rear);
+                let read = panel.read(&settings).unwrap();
+                assert_eq!(read.hide_halo_rear_view, !rear);
+                assert_eq!(read.hide_halo_side_view, side);
+                panel.check(SIDE_VIEW, !side);
+                let read = panel.read(&settings).unwrap();
+                assert_eq!(read.hide_halo_rear_view, !rear);
+                assert_eq!(read.hide_halo_side_view, !side);
+            }
+        }
     }
 
     fn assert_opacity_controls_validate_percent_and_keep_unedited_precision(panel: &Panel) {

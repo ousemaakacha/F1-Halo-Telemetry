@@ -2,7 +2,7 @@ mod instance;
 mod panel;
 
 use crate::{
-    diagnostics::Diagnostics,
+    diagnostics::{Diagnostics, EventLog},
     graphics::{Graphics, Surface},
     hud::{self, halo::Halo},
     input::{
@@ -147,6 +147,7 @@ pub fn run(options: Options) -> Result<(), String> {
         halo: None,
         tyres: None,
         settings,
+        event_log: EventLog::new(config.with_file_name("session-events.jsonl")),
         config,
         receiver,
         wake,
@@ -202,7 +203,14 @@ pub fn run(options: Options) -> Result<(), String> {
     if !existed {
         app.settings.save(&app.config)?;
     }
-    app.event_loop()?;
+    app.log_event("startup");
+    let result = app.event_loop();
+    if let Err(error) = &result {
+        app.event_log
+            .record("fatal_error", serde_json::json!({ "message": error }));
+    }
+    app.log_event("shutdown");
+    result?;
     if let Some(path) = app.options.diagnostics.clone() {
         app.export(&path)?;
     }
@@ -242,6 +250,7 @@ struct App {
     wake: std::sync::Arc<Wake>,
     timer: FrameTimer,
     diagnostics: Diagnostics,
+    event_log: EventLog,
     snapshot: Snapshot,
     demo: bool,
     edit: bool,
@@ -345,6 +354,7 @@ impl App {
                 self.forced_recreation = true;
                 self.create_graphics()?;
                 self.diagnostics.device_recreations += 1;
+                self.log_event("graphics_test_recreated");
             }
             let mask = self.snapshot.freshness_mask(now);
             if mask != self.fresh_mask {
@@ -355,9 +365,13 @@ impl App {
             self.update_session_visibility(now)?;
             if self.graphics.is_none() && now >= self.graphics_retry {
                 match self.create_graphics() {
-                    Ok(()) => self.diagnostics.device_recreations += 1,
+                    Ok(()) => {
+                        self.diagnostics.device_recreations += 1;
+                        self.log_event("graphics_recovered");
+                    }
                     Err(error) => {
                         self.graphics_error = Some(error);
+                        self.log_event("graphics_recovery_failed");
                         self.graphics_retry = now + Duration::from_secs(1);
                     }
                 }
@@ -373,6 +387,7 @@ impl App {
                     Err(error) => {
                         self.diagnostics.presentation_failures += 1;
                         self.graphics_error = Some(error);
+                        self.log_event("graphics_error");
                         self.surfaces = [None, None];
                         self.halo = None;
                         self.tyres = None;
@@ -394,6 +409,21 @@ impl App {
                 self.update_status(now);
             }
             let mut deadline = now + Duration::from_millis(250);
+            if let Some(alert) = self
+                .snapshot
+                .race_alert(now)
+                .filter(|_| self.settings.halo_model == crate::settings::HaloModel::Shift)
+            {
+                deadline = deadline
+                    .min(alert.received + crate::telemetry::ALERT_TTL + Duration::from_millis(1));
+                if let Some(session) = self.snapshot.session {
+                    deadline = deadline.min(
+                        session.received
+                            + crate::telemetry::state::DAMAGE_TTL
+                            + Duration::from_millis(1),
+                    );
+                }
+            }
             if poll_controller {
                 deadline = deadline.min(now + rear_view::POLL_INTERVAL);
             }
@@ -425,6 +455,10 @@ impl App {
                 ),
                 (
                     self.snapshot.gap_behind.map(|v| v.received),
+                    crate::telemetry::state::FAST_TTL,
+                ),
+                (
+                    self.snapshot.race_gaps.map(|v| v.received),
                     crate::telemetry::state::FAST_TTL,
                 ),
             ] {
@@ -528,6 +562,7 @@ impl App {
             self.dirty = true;
             self.next_frame = now;
             self.previous_live = false;
+            self.log_event("session_visibility");
         }
         Ok(())
     }
@@ -545,18 +580,29 @@ impl App {
     }
 
     fn update_controller(&mut self, now: Instant) -> bool {
+        let source = self.rear_input.source;
         let axes = self.rear_input.poll(now);
+        if source != self.rear_input.source {
+            self.log_event("controller_source_changed");
+        }
         if self.rear_input.take_toggle() {
+            self.log_event("controller_toggle");
             if let Err(error) = self.set_overlays_visible(!self.overlays_visible) {
                 self.panel.result(&error);
             }
         }
-        let eligible = self.settings.hide_halo_rear_view
+        let eligible = (self.settings.hide_halo_rear_view || self.settings.hide_halo_side_view)
             && !self.edit
             && !self.demo
             && self.snapshot.driving(now)
             && self.rear_input.game_focused();
-        let hidden = rear_view::held(self.rear_hidden, eligible, axes);
+        let hidden = rear_view::held(
+            self.rear_hidden,
+            eligible,
+            axes,
+            self.settings.hide_halo_rear_view,
+            self.settings.hide_halo_side_view,
+        );
         if hidden != self.rear_hidden {
             let previous = self.rear_hidden;
             self.rear_hidden = hidden;
@@ -568,6 +614,7 @@ impl App {
                 self.dirty = true;
                 self.next_frame = now;
                 self.previous_live = false;
+                self.log_event("rear_view_visibility");
             }
         }
         axes.is_some()
@@ -586,11 +633,40 @@ impl App {
         self.dirty = visible;
         self.next_frame = Instant::now();
         self.previous_live = false;
+        self.log_event("manual_visibility");
         self.panel.result(if visible {
             "HUDs enabled: shown automatically on track, hidden in menus. Demo and Edit remain visible."
         } else {
             "HUDs hidden. Telemetry continues; use the hotkey or double-press the controller shortcut to show them."
         });
+        Ok(())
+    }
+
+    fn apply_view_filters(&mut self) -> Result<(), String> {
+        let mut next = self.settings.clone();
+        next.hide_halo_rear_view = self.panel.checked(panel::REAR_VIEW);
+        next.hide_halo_side_view = self.panel.checked(panel::SIDE_VIEW);
+        let result = (|| {
+            self.overlays[0]
+                .apply_layout(next.effective_layouts(self.huds_visible(), false)[0])
+                .map_err(|error| error.to_string())?;
+            next.save(&self.config)
+        })();
+        if let Err(error) = result {
+            let _ = self.apply_layouts();
+            self.panel
+                .check(panel::REAR_VIEW, self.settings.hide_halo_rear_view);
+            self.panel
+                .check(panel::SIDE_VIEW, self.settings.hide_halo_side_view);
+            return Err(error);
+        }
+        self.settings = next;
+        self.rear_hidden = false;
+        self.dirty = true;
+        self.next_frame = Instant::now();
+        self.previous_live = false;
+        self.log_event("view_filter_settings");
+        self.panel.result("View hiding applied and saved.");
         Ok(())
     }
 
@@ -653,12 +729,18 @@ impl App {
             self.overlays[0].layout(self.settings.halo),
             self.overlays[1].layout(self.settings.tyres),
         ];
+        let rear_hidden = self.rear_hidden
+            && (s.hide_halo_rear_view, s.hide_halo_side_view)
+                == (
+                    self.settings.hide_halo_rear_view,
+                    self.settings.hide_halo_side_view,
+                );
         let bindings =
             replace_window_hotkeys(self.panel.hwnd, self.hotkeys, [&text[0], &text[1]], || {
                 for (overlay, layout) in self.overlays.iter().zip(s.effective_layouts(
                     self.overlays_visible
                         && (self.edit || demo || (!source_changed && self.session_active)),
-                    self.rear_hidden && s.hide_halo_rear_view,
+                    rear_hidden,
                 )) {
                     overlay
                         .apply_layout(layout)
@@ -689,6 +771,7 @@ impl App {
                 return Err(error);
             }
         }
+        self.rear_hidden = rear_hidden;
         self.settings = s;
         self.demo = demo;
         if source_changed {
@@ -697,6 +780,7 @@ impl App {
         }
         self.monitor_hz = overlay::monitor_refresh(self.overlays[0].hwnd);
         self.panel.populate_layout(&self.settings);
+        self.log_event("settings_applied");
         self.panel.result("Settings applied and saved.");
         self.dirty = true;
         Ok(())
@@ -749,9 +833,16 @@ impl App {
         match action {
             Action::Dirty => self.dirty = true,
             Action::ControllerInput(device, state) => {
-                self.rear_input.receive(device, state, Instant::now())
+                let source = self.rear_input.source;
+                self.rear_input.receive(device, state, Instant::now());
+                if source != self.rear_input.source {
+                    self.log_event("controller_source_changed");
+                }
             }
-            Action::ControllerRemoved(device) => self.rear_input.remove(device),
+            Action::ControllerRemoved(device) => {
+                self.rear_input.remove(device);
+                self.log_event("controller_removed");
+            }
             Action::Quit => self.quit = true,
             Action::Hotkey(id) => {
                 if self.hotkeys[0].is_some_and(|binding| binding.id == id) {
@@ -805,6 +896,7 @@ impl App {
             Action::Command(command) => match command {
                 command if self.panel.navigate(command) => (),
                 panel::APPLY => self.apply()?,
+                panel::REAR_VIEW | panel::SIDE_VIEW => self.apply_view_filters()?,
                 panel::SAVE_PROFILE => self.halo_profile(true)?,
                 panel::LOAD_PROFILE => self.halo_profile(false)?,
                 panel::EDIT => self.set_edit(!self.edit)?,
@@ -947,13 +1039,54 @@ impl App {
             .map(|g| g.adapter_name.as_str())
             .unwrap_or("device unavailable");
         self.panel.diagnostics(&format!(
-            "{}  |  {}:{}  |  {}\r\nUDP Hz: Telemetry {:.1} · Status {:.1} · Damage {:.1} · Aero {:.1}   |   Errors {} / format {} / reordered {}\r\nDraw CPU p95 {} ms · interval p95 {} ms · RX→Present p95 {} ms · GPU p95 {} ms\r\nCPU {:.2}% · RAM {:.1} MB · frames {} · recreations {}   |   {}",
+            "{}  |  {}:{}  |  {}\r\nRPM {} / {} · shift from 12500 RPM · rev lights {}%\r\nUDP Hz: Telemetry {:.1} · Status {:.1} · Damage {:.1} · Aero {:.1}   |   Errors {} / format {} / reordered {}\r\nDraw CPU p95 {} ms · interval p95 {} ms · RX→Present p95 {} ms · GPU p95 {} ms\r\nCPU {:.2}% · RAM {:.1} MB · frames {} · recreations {}   |   {}",
             self.snapshot.connection(now).label(), self.settings.bind_ip, self.settings.port, adapter,
+            self.snapshot.telemetry.map(|t| t.value.rpm.to_string()).unwrap_or_else(|| "--".into()),
+            self.snapshot.status.map(|s| s.value.max_rpm.to_string()).unwrap_or_else(|| "--".into()),
+            self.snapshot.telemetry.map(|t| t.value.rev_percent.to_string()).unwrap_or_else(|| "--".into()),
             self.rates[6], self.rates[7], self.rates[10], self.rates[16], c.malformed, c.unsupported, c.reordered,
             format(summary.draw_cpu_ms_p95), format(summary.frame_interval_ms_p95),
             format(summary.receive_to_present_submit_ms_p95), format(summary.gpu_ms_p95),
             self.usage.cpu, self.usage.memory as f64 / 1_048_576.0, summary.render_samples, summary.device_recreations,
             self.graphics_error.as_deref().unwrap_or("Submission latency only; optical latency and game FPS are not measured.")));
+    }
+
+    fn log_event(&mut self, event: &str) {
+        let now = Instant::now();
+        let age = |received| now.saturating_duration_since(received).as_millis();
+        self.event_log.record(event, serde_json::json!({
+            "elapsed_seconds": now.saturating_duration_since(self.start).as_secs_f64(),
+            "demo": self.demo, "edit": self.edit,
+            "overlays_enabled": self.overlays_visible,
+            "visible": self.settings.effective_layouts(self.huds_visible(), self.rear_hidden).map(|l| l.visible),
+            "session_active": self.session_active,
+            "connection": self.snapshot.connection(now).label(),
+            "telemetry_age_ms": self.snapshot.telemetry.map(|v| age(v.received)),
+            "lap_age_ms": self.snapshot.lap_status.map(|v| age(v.received)),
+            "status_age_ms": self.snapshot.status.map(|v| age(v.received)),
+            "session_age_ms": self.snapshot.session.map(|v| age(v.received)),
+            "session_type": self.snapshot.session.map(|v| v.value.session_type),
+            "session_paused": self.snapshot.session.map(|v| v.value.paused),
+            "network_paused": self.snapshot.status.map(|v| v.value.paused),
+            "spectating": self.snapshot.session.map(|v| v.value.spectating),
+            "result_status": self.snapshot.lap_status.map(|v| v.value),
+            "driver_status": self.snapshot.driver_status.map(|v| v.value),
+            "rear_view_hidden": self.rear_hidden,
+            "rear_view_enabled": self.settings.hide_halo_rear_view,
+            "side_view_enabled": self.settings.hide_halo_side_view,
+            "controller_source": self.rear_input.source,
+            "controller_axes": self.rear_input.last_axes,
+            "controller_samples": self.rear_input.raw_samples,
+            "received_packets": self.snapshot.counters.received,
+            "malformed_packets": self.snapshot.counters.malformed,
+            "unsupported_packets": self.snapshot.counters.unsupported,
+            "session_count": self.snapshot.counters.sessions,
+            "flashbacks": self.snapshot.counters.flashbacks,
+            "socket_error": self.snapshot.socket_error,
+            "graphics_error": self.graphics_error,
+            "presentation_failures": self.diagnostics.presentation_failures,
+            "device_recreations": self.diagnostics.device_recreations,
+        }));
     }
 
     fn export(&mut self, path: &std::path::Path) -> Result<(), String> {
@@ -1018,6 +1151,14 @@ impl App {
                     "transparent_style": style & WS_EX_TRANSPARENT.0 != 0,
                     "topmost": style & WS_EX_TOPMOST.0 != 0, "visible": unsafe { IsWindowVisible(o.hwnd) }.as_bool(), "width": r.right-r.left, "height": r.bottom-r.top })
             }).collect::<Vec<_>>(),
+        });
+        report["side_view_enabled"] = self.settings.hide_halo_side_view.into();
+        report["engine_rpm"] = serde_json::json!(self.snapshot.telemetry.map(|t| t.value.rpm));
+        report["max_rpm"] = serde_json::json!(self.snapshot.status.map(|s| s.value.max_rpm));
+        report["rev_lights_percent"] =
+            serde_json::json!(self.snapshot.telemetry.map(|t| t.value.rev_percent));
+        report["event_log"] = serde_json::json!({
+            "path": self.event_log.path, "error": self.event_log.error,
         });
         report["automatic_visibility"] = serde_json::json!({
             "session_active": self.session_active,

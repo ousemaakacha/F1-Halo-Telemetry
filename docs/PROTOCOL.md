@@ -72,6 +72,23 @@ posizione nell'array. Posizione locale assente o ultima, giocatore non attivo e
 assenza di un inseguitore attivo producono un valore assente. Il dato live scade
 dopo 500 ms e viene invalidato con gli altri campi al cambio timeline/sorgente.
 
+Shift usa anche `deltaToCarInFront` della vettura locale per il distacco
+anteriore, soltanto se esiste un'unica auto attiva nella posizione precedente.
+Per entrambi i nuovi indicatori vengono conservati gli indici delle auto
+adiacenti; garage, posizioni ambigue e intervalli invalidi non producono un
+valore. La lettura anteriore non valida non altera il distacco posteriore
+preesistente. Un Lap Data malformato azzera invece i soli nuovi indicatori e
+il loro storico. Nessun valore mancante viene interpretato come zero.
+
+L'andamento di Shift richiede campioni accettati della stessa auto per almeno
+un secondo di `sessionTime` e di ricezione monotona. Il tempo di gioco deve
+avanzare a ogni campione e nessun intervallo, di gioco o di ricezione, può
+superare 500 ms. Si confrontano i millisecondi con una soglia di 50 ms: il
+distacco diminuisce o aumenta; altrimenti il segno resta neutro. Assenza di
+campioni, cambio auto, pausa, spettatore, cambio sessione/sorgente, riavvio,
+flashback e fine sessione azzerano lo storico. Questi indicatori non usano
+velocità, distanza o tempi sul giro per stimare i distacchi.
+
 Session History usa offset assoluti: `carIdx` u8=29, `numLaps` u8=30,
 `numTyreStints` u8=31, numeri dei giri migliori u8=32–35. I record dei giri
 iniziano a 36 e hanno stride 14: tempo u32 a offset 0 e validità u8 a offset 13.
@@ -106,6 +123,42 @@ Participants legge numActiveCars a offset assoluto 29. Non presume che gli slot
 validi siano contigui: l'attività locale è verificata con resultStatus.
 
 ## Ordinamento e validità
+
+### Avvisi temporanei Shift
+
+Campi verificati nelle strutture EA 2026 già conservate nella cache locale:
+
+| Avviso | Fonte e offset | Interpretazione e validità |
+| --- | --- | --- |
+| Bandiere locali | Car Status, record vettura +28, i8 | -1 sconosciuto; 0 nessuna; 1 verde; 2 blu; 3 gialla. Altri valori restano sconosciuti. TTL 500 ms. |
+| SC/VSC | Session, corpo +124 | 0 assente; 1 SC; 2 VSC; 3 giro di formazione, che non genera un falso SC. TTL 2 s. |
+| Penalità e warning | Lap Data locale, record +38/+39/+41/+42 | Secondi di penalità accumulati, warning totali, DT e stop-go non scontati. Solo gli aumenti rispetto a un campione entro 500 ms generano nuove notifiche. |
+| Rossa/scacchi | Event, codice a offset assoluto 29 | `RDFL` e `CHQF`: notifiche puntuali ufficiali, con identità tipo/frame e ricezione monotona. Eventi anteriori all'header corrente vengono ignorati. |
+
+Il delta dei secondi di penalità è un incremento del contatore ricevuto, non
+una stima del tempo ancora da scontare né l'identificazione di una specifica
+infrazione. I totali iniziali e quelli ricevuti dopo un'interruzione vengono
+usati come base, senza annunciarli come nuovi eventi. Un contatore che diminuisce
+invalida le notifiche relative, senza ricostruire cause non trasmesse.
+
+Ogni avviso dura al massimo cinque secondi dal cambiamento, senza rinnovo sui
+pacchetti uguali; cessa prima se il suo stato termina o il dato diventa
+sconosciuto/scaduto. Gli avvisi hanno priorità di sicurezza e non lampeggiano.
+Campioni di Status/Lap più vecchi di 500 ms nel tempo di gioco rispetto
+all'header corrente, o Session più vecchie di 2 s, non generano notifiche.
+Il banner richiede la normale condizione di guida attiva: non modifica la
+visibilità degli HUD in pausa, garage, spettatore o a fine sessione.
+
+Limiti: Car Damage è attualmente decodificato soltanto per l'usura gomme;
+non si inferiscono danni ai componenti o collisioni dall'usura. I dettagli
+di `PENA` e `SCAR` non sono decodificati: non si mostrano cause delle penalità,
+annunci SC di rientro o ripartenza. `RCWN` indica il vincitore, non un warning.
+`m_vehicleFIAFlags` non codifica la bandiera rossa; questa usa soltanto `RDFL`.
+La rossa/scacchi è una notifica dell'evento ricevuto, non uno stato persistente
+ricostruito oltre i cinque secondi. Un successivo verde invalida la notifica
+rossa. La Demo non genera automaticamente avvisi fittizi.
+
+### Sequenza dei pacchetti
 
 Il contatore overall viene confrontato separatamente per tipo di pacchetto,
 con aritmetica seriale wrapping u32. Pacchetti di categorie diverse con lo stesso
