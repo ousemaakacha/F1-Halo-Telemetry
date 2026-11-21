@@ -1154,6 +1154,14 @@ impl App {
         });
         report["side_view_enabled"] = self.settings.hide_halo_side_view.into();
         report["engine_rpm"] = serde_json::json!(self.snapshot.telemetry.map(|t| t.value.rpm));
+        report["ers_harvested_this_lap_mguk_joules"] =
+            serde_json::json!(self.snapshot.status.map(|s| s.value.harvested_mguk_joules));
+        report["ers_harvest_limit_per_lap_joules"] =
+            serde_json::json!(self.snapshot.status.map(|s| s.value.harvest_limit_joules));
+        report["ers_deployed_this_lap_joules"] =
+            serde_json::json!(self.snapshot.status.map(|s| s.value.deployed_joules));
+        report["ers_deploy_limit_per_lap_joules"] =
+            serde_json::json!(self.snapshot.ers_deploy_limit_joules);
         report["max_rpm"] = serde_json::json!(self.snapshot.status.map(|s| s.value.max_rpm));
         report["rev_lights_percent"] =
             serde_json::json!(self.snapshot.telemetry.map(|t| t.value.rev_percent));

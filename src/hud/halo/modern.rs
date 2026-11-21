@@ -1,6 +1,6 @@
 use super::*;
 
-const RADIUS: f32 = 710.0;
+pub(super) const RADIUS: f32 = 710.0;
 const BAND_DEPTH: f32 = 76.0;
 const TEXT_ROWS: [f32; 2] = [-53.0, -20.0];
 
@@ -16,18 +16,34 @@ fn left_edge(depth: f32) -> f32 {
     42.0 + 48.0 * depth - 24.0 * depth * depth
 }
 
-fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
+pub(super) fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
     TextCurve::new((0..=96).map(|i| {
         let angle = (start + (end - start) * i as f32 / 96.0).to_radians();
         band_point(angle, offset)
     }))
 }
 
-fn band_point(angle: f32, offset: f32) -> (f32, f32) {
+pub(super) fn band_point(angle: f32, offset: f32) -> (f32, f32) {
     let radius = RADIUS - offset;
     (
         CENTER_X + radius * angle.sin(),
         153.0 + RADIUS - radius * angle.cos(),
+    )
+}
+
+pub(super) const BROW: [(f32, f32); 4] =
+    [(162.0, 102.0), (305.0, 33.0), (354.0, 8.0), (420.0, 8.0)];
+
+pub(super) fn brow(factory: &ID2D1Factory1) -> Result<ID2D1PathGeometry> {
+    let mirror = |(x, y)| (2.0 * CENTER_X - x, y);
+    classic::bezier_path(
+        factory,
+        BROW[0],
+        &[
+            [BROW[1], BROW[2], BROW[3]],
+            [mirror(BROW[2]), mirror(BROW[1]), mirror(BROW[0])],
+        ],
+        false,
     )
 }
 
@@ -47,15 +63,7 @@ impl Modern {
     pub fn new(factory: &ID2D1Factory1) -> Result<Self> {
         Ok(Self {
             body: strip(factory, 0.0, 1.0)?,
-            brow: classic::bezier_path(
-                factory,
-                (162.0, 102.0),
-                &[
-                    [(305.0, 33.0), (354.0, 8.0), (420.0, 8.0)],
-                    [(486.0, 8.0), (535.0, 33.0), (678.0, 102.0)],
-                ],
-                false,
-            )?,
+            brow: brow(factory)?,
             top: arc(factory, 42.0, 798.0, -BAND_DEPTH)?,
             lower_edge: arc(factory, 66.0, 774.0, 0.0)?,
             panels: [
@@ -185,7 +193,7 @@ impl Modern {
     }
 }
 
-fn panel(
+pub(super) fn panel(
     factory: &ID2D1Factory1,
     left: f32,
     right: f32,

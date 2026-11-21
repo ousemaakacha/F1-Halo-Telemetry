@@ -11,6 +11,7 @@ pub const DAMAGE_SIZE: usize = 1133;
 pub const AERO_SIZE: usize = 269;
 pub const HISTORY_SIZE: usize = 1460;
 pub const LAP_SIZE: usize = 1399;
+pub const PARTICIPANTS_SIZE: usize = 1470;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CarGap {
@@ -20,6 +21,7 @@ pub struct CarGap {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LapData {
+    pub position: u8,
     pub result_status: u8,
     pub driver_status: u8,
     pub current_lap: u8,
@@ -27,6 +29,24 @@ pub struct LapData {
     /// Active race neighbours, ahead then behind, with identity for trend tracking.
     pub race_gaps: [Option<CarGap>; 2],
     pub race_control: RaceControl,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Participants {
+    pub active_cars: u8,
+    pub names: [[u8; 32]; CAR_COUNT],
+}
+
+impl Participants {
+    pub fn name(&self, index: u8) -> Option<&str> {
+        let bytes = self.names.get(usize::from(index))?;
+        let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+        std::str::from_utf8(&bytes[..end])
+            .ok()
+            .filter(|s| !s.chars().any(char::is_control))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -91,7 +111,9 @@ pub struct CarStatus {
     pub max_rpm: u16,
     pub ers_joules: f32,
     pub deploy_mode: u8,
+    pub harvested_mguk_joules: f32,
     pub harvest_limit_joules: f32,
+    pub deployed_joules: f32,
     pub paused: bool,
     pub fia_flag: Option<u8>,
 }
@@ -112,6 +134,8 @@ pub struct Aero {
     pub regulations_2026: bool,
 }
 
+// Fixed-size wire data keeps parsing and snapshot publication allocation-free.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Packet {
     Telemetry(Header, CarTelemetry),
@@ -121,7 +145,7 @@ pub enum Packet {
     Session(Header, SessionData),
     Lap(Header, LapData),
     History(Header, LapHistory),
-    Participants(Header, u8),
+    Participants(Header, Participants),
     Event(Header, [u8; 4]),
     Ignored(Header),
 }
@@ -215,7 +239,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
         1 => 926,
         2 => LAP_SIZE,
         3 => 45,
-        4 => 1470,
+        4 => PARTICIPANTS_SIZE,
         6 => TELEMETRY_SIZE,
         7 => STATUS_SIZE,
         10 => DAMAGE_SIZE,
@@ -297,11 +321,23 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
                     max_rpm: u16_at(c, 17),
                     ers_joules: finite_range(f32_at(c, 37), 0.0, f32::MAX, "ersStoreEnergy")?,
                     deploy_mode: c[41],
+                    harvested_mguk_joules: finite_range(
+                        f32_at(c, 42),
+                        0.0,
+                        f32::MAX,
+                        "ersHarvestedThisLapMGUK",
+                    )?,
                     harvest_limit_joules: finite_range(
                         f32_at(c, 50),
                         0.0,
                         f32::MAX,
                         "ersHarvestLimitPerLap",
+                    )?,
+                    deployed_joules: finite_range(
+                        f32_at(c, 54),
+                        0.0,
+                        f32::MAX,
+                        "ersDeployedThisLap",
                     )?,
                     paused: boolean(c[58], "networkPaused")?,
                     fia_flag: (c[28] <= 3).then_some(c[28]),
@@ -400,6 +436,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
             Packet::Lap(
                 h,
                 LapData {
+                    position,
                     result_status: result,
                     driver_status,
                     current_lap: car[33],
@@ -458,7 +495,15 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
             if b[29] > 24 {
                 return Err(ParseError::InvalidValue("numActiveCars"));
             }
-            Packet::Participants(h, b[29])
+            Packet::Participants(
+                h,
+                Participants {
+                    active_cars: b[29],
+                    names: std::array::from_fn(|i| {
+                        b[30 + 60 * i + 10..30 + 60 * i + 42].try_into().unwrap()
+                    }),
+                },
+            )
         }
         3 => Packet::Event(h, b[29..33].try_into().unwrap()),
         _ => Packet::Ignored(h),

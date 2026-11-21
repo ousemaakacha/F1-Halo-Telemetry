@@ -28,7 +28,7 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
     })
     .unwrap();
     let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut buffer = [0u8; f1_halo_telemetry::telemetry::protocol::HISTORY_SIZE];
+    let mut buffer = [0u8; f1_halo_telemetry::telemetry::protocol::PARTICIPANTS_SIZE];
     let start = Instant::now();
     let mut received = false;
     let mut frame = 120;

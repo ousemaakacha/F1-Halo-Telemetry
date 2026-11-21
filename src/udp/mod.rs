@@ -164,6 +164,7 @@ fn receive_loop(
                 year: 2026,
                 source: CapacitySource::Demo,
             });
+            state.snapshot.ers_deploy_limit_joules = Some(demo::DEMO_DEPLOY_LIMIT);
             publish(&shared, state.snapshot, &wake);
             continue;
         }
@@ -233,6 +234,9 @@ fn receive_loop(
                         }
                     }
                     snapshot.ers_capacity = catalog.as_ref().and_then(|c| c.resolve(snapshot));
+                    snapshot.ers_deploy_limit_joules = catalog
+                        .as_ref()
+                        .and_then(|c| c.resolve_deploy_limit(snapshot));
                     publish(&shared, state.snapshot, &wake);
                 }
             }

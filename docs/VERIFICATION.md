@@ -1,5 +1,156 @@
 # Local verification
 
+## f1 tv: contorni delle lineette Aero e valori MJ rimossi — 21 novembre 2026
+
+Rimosso il riquadro comune di ACTIVE AERO. Ogni lineetta conserva il centro
+chiaro e riceve un contorno aderente, comprese le estremità arrotondate:
+verde in Straight Mode attivo, rosso in Corner Mode inattivo. Con dati
+assenti, scaduti o non applicabili il contorno resta spento.
+Rimosse le didascalie numeriche in MJ sotto RCH e DPL; il riempimento continua
+a indicare il budget residuo per giro.
+
+Build Release e rustfmt superati. Verificati 30 scenari nativi Direct2D,
+con controllo dei pixel per entrambi i bordi, assenza di contorni separati
+dalle lineette e assenza delle didascalie MJ. Controllate anche le scale
+1000×300 e 2000×600. Gli altri cinque modelli non presentano pixel modificati.
+[Aero attivo](../artifacts/f1-tv-aero-outlines-preview.png) e
+[Aero inattivo](../artifacts/f1-tv-aero-outlines-off.png).
+Nessuna nuova prova in gara.
+
+## f1 tv: sigle RCH e DPL centrate — 21 novembre 2026
+
+Sostituite le etichette estese con **RCH** e **DPL**, disegnate come parole
+complete su una riga, con spaziatura naturale. Le due sigle sono centrate
+nella sezione mediana dei contenitori e condividono lo stesso allineamento
+verticale. Conservati riempimenti e valori dei budget in MJ.
+
+Build Release e rustfmt superati. Anteprima Direct2D verificata a 1000×300
+e 2000×600; il controllo dei pixel conferma tre lettere compatte e uno
+scarto del centro inferiore a un'unità nella scala 1000×300.
+[Anteprima](../artifacts/f1-tv-rch-dpl-preview.png).
+Nessuna nuova prova in gara o modifica ai calcoli energetici.
+
+## f1 tv: percentuale, budget per giro e bordo Aero — 21 novembre 2026
+
+La batteria mostra la percentuale al posto del fulmine e il suo ingombro,
+terminale compreso, è centrato sul quadrante. Il centro mostra la modalità
+ERS corrente NONE/MEDIUM/HOTLAP/BOOST. RECHARGE e DEPLOY hanno riempimento
+proporzionale al residuo del giro e relativo valore in MJ. Un bordo verde
+circonda le due linee Aero in Straight Mode, rosso in Corner Mode; dati
+assenti o non applicabili mantengono il bordo spento.
+
+RECHARGE usa limite UDP meno energia MGU-K già raccolta; DEPLOY usa il limite
+nominale dei file del gioco meno energia già usata. I contatori vengono
+letti da Car Status agli offset 42 e 54, separati dalla capacità batteria.
+L'ispezione locale ha verificato 44 risorse e zero errori: 4 MJ di capacità
+batteria e 13 MJ di limite DEPLOY per il 2026.
+[Report dei parametri](../artifacts/f1-tv-game-energy.json).
+
+Passati **125 test**, rustfmt, Clippy `--all-targets -D warnings`, build Release
+ed esempi. Coperti offset UDP, non finiti, limiti indipendenti, reset dei
+contatori, superamento del limite, budget zero, sorgenti assenti, selezione
+della stagione, limiti incoerenti e conservazione della capacità valida.
+
+Verificati 30 casi Direct2D, con batteria 0/55/100%, tutte le modalità ERS,
+budget pieni/esauriti/superati e stati Aero. Le asserzioni sui pixel controllano
+percentuale, riempimenti e colori del bordo. Gli altri cinque modelli
+coincidono con il riferimento nei dieci confronti eseguiti.
+[Aero attivo](../artifacts/f1-tv-energy-preview.png),
+[Aero inattivo](../artifacts/f1-tv-energy-aero-off.png).
+
+Smoke Release: Demo per sei secondi, **348 frame**, **60,00 Hz**, zero errori
+di presentazione; UDP sintetico per sette secondi, **409 frame**, **60,01 Hz**,
+zero errori. Il percorso UDP ha letto capacità e limite DEPLOY dai file
+installati, senza usare i valori Demo.
+[Demo](../artifacts/f1-tv-energy-demo-smoke.json),
+[UDP sintetico](../artifacts/f1-tv-energy-udp-smoke.json).
+Nessuna nuova prova durante una sessione di guida reale. Il limite DEPLOY
+letto dai file è nominale.
+
+## f1 tv: nomi e distacchi davanti/dietro — 21 novembre 2026
+
+Il pannello sinistro mostra l'avversario davanti sopra e quello dietro sotto,
+con posizione, nome e intervallo dalla propria vettura. I tempi occupano la
+colonna precedente TURN e seguono le stesse due righe dei nomi. Entrambi i
+nomi e i distacchi mantengono contrasto pieno; i nomi lunghi conservano la
+dimensione dei caratteri. La Demo include entrambi gli avversari.
+
+I due abbinamenti identità/intervallo provengono dallo stesso Lap Data e
+scadono insieme. Il nuovo test verifica nomi diversi dal giocatore, cambio
+avversario, assenza del pilota davanti, distacco zero, scadenza, pausa e
+invalidazione. Passati **120 test**, rustfmt, Clippy `--all-targets -D warnings`,
+build Release ed esempi.
+
+Verificati 21 casi Direct2D, compresi primo/ultimo posto, Lap Data e nomi
+assenti, intervalli molto lunghi e zero. Due casi verificati anche a 1000×300.
+[Anteprima con 1.234s davanti e 0.832s dietro](../artifacts/f1-tv-gaps-preview.png).
+La prova si basa su telemetria sintetica; nessuna nuova verifica in gara.
+
+## f1 tv: nome e RPM attuali — 21 novembre 2026
+
+Il selettore mostra **f1 tv**. La scelta già salvata rimane compatibile.
+La didascalia sotto la barra RPM mostra il valore corrente completo, per
+esempio **RPM 10000**; dati assenti o scaduti producono **RPM --**.
+
+Passati **119 test**, rustfmt, Clippy `--all-targets -D warnings` e build
+Release con esempi. Verificati 15 casi Direct2D, compresi 10.000, 12.000,
+65.535 RPM, status assente e telemetria scaduta; testi e margini conservati.
+[Anteprima aggiornata](../artifacts/f1-tv-preview.png).
+Nessuna nuova prova durante una sessione di guida reale.
+
+## Replica: curvature simmetriche e testi distanziati — 21 novembre 2026
+
+Ricostruite le ali con le primitive curve di Modern/Shift, raggio comune,
+estremi speculari e spessore radiale costante. Arco bianco e quadrante ora
+condividono il centro della finestra. I due pannelli hanno la stessa cornice;
+la classifica mantiene due righe equidistanti, mentre a destra GEARS, marce,
+barra RPM e didascalia hanno righe separate. I nomi lunghi usano `...` senza
+ridurre la dimensione dei caratteri.
+
+Passati **119 test**, rustfmt, Clippy `--all-targets -D warnings`, build Release
+e build degli esempi. I controlli geometrici verificano centro, riflessione,
+spessore, spazio tra righe e separazione dell'arco dai pannelli.
+
+Verificati 13 casi Direct2D a 2000×600 e due casi anche a 1000×300. L'analisi
+dei pixel dei testi conferma un margine radiale minimo di 12,2 unità nella
+scala 1000×300; nomi normali e lunghi mantengono l'altezza dei caratteri.
+La geometria dell'arco è speculare; il centro ottico del raster resta entro
+un pixel dal centro alle due risoluzioni, con differenze di antialias ai bordi.
+I dieci confronti degli altri cinque modelli coincidono, salvo due pixel
+antialias di Wide nel caso senza dati.
+[Anteprima aggiornata](../artifacts/replica-mclaren-symmetric-preview.png).
+
+La prova Demo della nuova build è stata impedita dall'istanza precedente
+già aperta: il secondo avvio richiama il suo pannello ed esce. Nessuna prova
+della nuova disposizione durante una sessione di guida reale.
+
+## Replica McLaren — 21 novembre 2026
+
+Aggiunto **Replica (McLaren)** come sesto modello selezionabile. Geometrie
+tracciate sul secondo riferimento: quadrante km/h/mph, BOOST/OVERTAKE,
+batteria, fasce RECHARGE/DEPLOY, pedali segmentati, classifica, TURN e pannello
+ACTIVE AERO/marce/RPM. Nomi da Participants e posizione locale da Lap Data;
+la seconda riga segue l'identità dell'inseguitore in classifica. TURN rimane
+`--`: numero e direzione di curva non sono contenuti nel protocollo.
+
+Passati **118 test**, rustfmt, Clippy `--all-targets -D warnings`, build Release
+e build degli esempi, con `--locked`. I test coprono offset e stride Participants,
+nomi UTF-8, testo invalido e senza NUL, indici non contigui, cambio inseguitore,
+scadenza, cambio sessione, geometria e selezione di tutti i modelli nel pannello.
+
+Verificati 13 render Direct2D: riferimento, frenata, boost, Corner Mode,
+dati assenti/scaduti, status/aero/capacità mancanti, fondo trasparente,
+retromarcia, nome lungo e colore personalizzato. Dieci confronti con il codice
+precedente verificano i cinque modelli esistenti con e senza dati: pixel
+identici salvo due pixel antialias di Wide nella prova con dati.
+[Anteprima nativa con dati simulati](../artifacts/replica-mclaren-preview.png).
+
+Smoke test dell'app Release per sei secondi in Demo: **348 frame**, **60,00 Hz**,
+**zero errori di presentazione**.
+[Report](../artifacts/replica-mclaren-smoke.json).
+L'allineamento con l'halo della vettura va regolato sulla visuale del gioco;
+nessuna prova in una nuova sessione di guida reale.
+
 ## Filtri visuale Halo applicati subito — 20 novembre 2026
 
 I due interruttori **Hide Halo** ora applicano e salvano subito la propria

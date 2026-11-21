@@ -600,11 +600,9 @@ impl Panel {
         self.select(
             HALO_MODEL,
             match s.halo_model {
-                HaloModel::Wide => 0,
-                HaloModel::Classic => 1,
-                HaloModel::Modern => 2,
-                HaloModel::Carbon => 3,
-                HaloModel::Shift => 4,
+                HaloModel::Modern => 0,
+                HaloModel::Shift => 1,
+                HaloModel::Replica => 2,
             },
         );
         self.select(
@@ -722,11 +720,9 @@ impl Panel {
         s.hide_halo_rear_view = self.checked(REAR_VIEW);
         s.hide_halo_side_view = self.checked(SIDE_VIEW);
         s.halo_model = match self.selected(HALO_MODEL) {
-            0 => HaloModel::Wide,
-            1 => HaloModel::Classic,
-            2 => HaloModel::Modern,
-            3 => HaloModel::Carbon,
-            4 => HaloModel::Shift,
+            0 => HaloModel::Modern,
+            1 => HaloModel::Shift,
+            2 => HaloModel::Replica,
             _ => return Err("Select a Halo model.".into()),
         };
         s.bind_ip = self.text(IP).trim().into();
@@ -1393,6 +1389,14 @@ mod tests {
         assert_eq!(read.halo.scale, settings.halo.scale);
         assert_eq!(read.tyres.opacity, settings.tyres.opacity);
         assert_opacity_controls_validate_percent_and_keep_unedited_precision(&panel);
+        for model in HaloModel::ALL {
+            let settings = Settings {
+                halo_model: model,
+                ..Settings::default()
+            };
+            panel.populate(&settings, false);
+            assert_eq!(panel.read(&settings).unwrap().halo_model, model);
+        }
         for rear in [false, true] {
             for side in [false, true] {
                 let settings = Settings {

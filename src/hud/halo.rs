@@ -1,6 +1,6 @@
-mod carbon;
 mod classic;
 mod modern;
+mod replica;
 mod shift;
 
 use crate::{
@@ -163,9 +163,8 @@ fn left_text_curve(start: f32, end: f32, offset: f32) -> TextCurve {
 
 pub struct Halo {
     animation_start: Instant,
-    carbon: carbon::Carbon,
-    classic: classic::Classic,
     modern: modern::Modern,
+    replica: replica::Replica,
     shift_left: shift::Left,
     shift_right: shift::Right,
     ribbon: ID2D1PathGeometry,
@@ -187,9 +186,8 @@ impl Halo {
     pub fn new(factory: &ID2D1Factory1) -> Result<Self> {
         Ok(Self {
             animation_start: Instant::now(),
-            carbon: carbon::Carbon::new(factory)?,
-            classic: classic::Classic::new(factory)?,
             modern: modern::Modern::new(factory)?,
+            replica: replica::Replica::new(factory)?,
             shift_left: shift::Left::new(factory)?,
             shift_right: shift::Right::new(factory)?,
             ribbon: halo_path(factory, 0.0, 875.0, -82.0, Some((20.0, 825.0, -3.0)))?,
@@ -236,8 +234,8 @@ impl Halo {
         edit: bool,
         now: Instant,
     ) {
-        if settings.halo_model == HaloModel::Carbon {
-            self.carbon.draw(p, snapshot, settings, now);
+        if settings.halo_model == HaloModel::Replica {
+            self.replica.draw(p, snapshot, settings, now);
         } else {
             p.translated((CONTENT_PADDING, 0.0), |p| {
                 self.draw_content(p, snapshot, settings, now);
@@ -264,7 +262,6 @@ impl Halo {
         let aero = current_aero(snapshot, now);
         let accent = settings.colours.accent;
 
-        let is_classic = settings.halo_model == HaloModel::Classic;
         let is_modern = settings.halo_model == HaloModel::Modern;
         let is_shift = settings.halo_model == HaloModel::Shift;
         let modern_shape = is_modern || is_shift;
@@ -280,9 +277,7 @@ impl Halo {
         } else {
             None
         };
-        if is_classic {
-            self.classic.draw_frame(p, accent, settings.halo.opacity);
-        } else if modern_shape {
+        if modern_shape {
             self.modern.draw_frame(p, accent, settings.halo.opacity);
         } else {
             p.geometry(&self.ribbon, INK, settings.halo.opacity);
@@ -432,7 +427,7 @@ impl Halo {
                     settings.colours.throttle,
                 ),
             ] {
-                let angle = if is_modern || is_classic {
+                let angle = if is_modern {
                     if x < CENTER_X { -9.0 } else { 9.0 }
                 } else {
                     halo_angle(x + 19.0)
@@ -477,11 +472,7 @@ impl Halo {
         if !modern_shape {
             p.rotated(
                 (260.0, 123.0),
-                if is_classic {
-                    classic::lower_angle(260.0)
-                } else {
-                    halo_angle(260.0)
-                },
+                halo_angle(260.0),
                 |p| {
                     let pod = rect(230.0, 87.0, 59.0, 74.0);
                     p.rounded(pod, 10.0, INK, settings.halo.opacity);
@@ -490,10 +481,7 @@ impl Halo {
             );
         }
 
-        if is_classic {
-            self.classic
-                .draw_wings(p, tel, status, aero, snapshot.gap_behind_ms(now), settings);
-        } else if is_modern {
+        if is_modern {
             self.modern
                 .draw_wings(p, tel, status, aero, snapshot.gap_behind_ms(now), settings);
         } else if is_shift {

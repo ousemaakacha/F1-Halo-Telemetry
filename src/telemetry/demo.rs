@@ -2,8 +2,9 @@
 use super::protocol::*;
 
 pub const DEMO_ERS_CAPACITY: f32 = 4_000_000.0;
+pub const DEMO_DEPLOY_LIMIT: f32 = 13_000_000.0;
 
-pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
+pub fn sample(seconds: f32, frame: u32) -> [Packet; 8] {
     let phase = (seconds * 0.33).sin();
     let zone_seconds = seconds.rem_euclid(18.0);
     let speed = (190.0 + phase * 125.0).max(0.0);
@@ -42,7 +43,9 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
                 max_rpm: 15000,
                 ers_joules: DEMO_ERS_CAPACITY * (0.58 + phase * 0.27),
                 deploy_mode: (seconds / 4.0).rem_euclid(4.0) as u8,
+                harvested_mguk_joules: 8_500_000.0 * 0.4,
                 harvest_limit_joules: 8_500_000.0,
+                deployed_joules: DEMO_DEPLOY_LIMIT * 0.55,
                 paused: false,
                 fia_flag: None,
             },
@@ -84,12 +87,16 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
         Packet::Lap(
             Header { packet_id: 2, ..h },
             LapData {
+                position: 2,
                 result_status: 2,
                 driver_status: 4,
                 current_lap: 3,
                 gap_behind_ms: Some(gap_behind_ms),
                 race_gaps: [
-                    None,
+                    Some(CarGap {
+                        car_index: 1,
+                        millis: (1_500.0 + phase * 700.0).round() as u32,
+                    }),
                     Some(CarGap {
                         car_index: 0,
                         millis: gap_behind_ms,
@@ -104,6 +111,23 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 7] {
                 formula: 13,
                 session_type: 18,
                 ..SessionData::default()
+            },
+        ),
+        Packet::Participants(
+            Header { packet_id: 4, ..h },
+            Participants {
+                active_cars: 3,
+                names: std::array::from_fn(|i| {
+                    let mut name = [0; 32];
+                    let text: &[u8] = match i {
+                        23 => b"NORRIS",
+                        0 => b"STROLL",
+                        1 => b"PIASTRI",
+                        _ => b"",
+                    };
+                    name[..text.len()].copy_from_slice(text);
+                    name
+                }),
             },
         ),
     ]
@@ -121,6 +145,7 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
         Packet::History(..) => HISTORY_SIZE,
         Packet::Lap(..) => LAP_SIZE,
         Packet::Session(..) => 926,
+        Packet::Participants(..) => PARTICIPANTS_SIZE,
         _ => return 0,
     };
     if buffer.len() < size {
@@ -140,6 +165,14 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
     b[23..27].copy_from_slice(&h.overall_frame.to_le_bytes());
     b[27] = h.player;
     b[28] = 255;
+    if let Packet::Participants(_, participants) = packet {
+        b[29] = participants.active_cars;
+        for (index, name) in participants.names.iter().enumerate() {
+            let offset = 30 + 60 * index + 10;
+            b[offset..offset + 32].copy_from_slice(name);
+        }
+        return size;
+    }
     if let Packet::Session(_, session) = packet {
         b[HEADER_SIZE + 6] = session.session_type;
         b[HEADER_SIZE + 8] = session.formula;
@@ -150,7 +183,11 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
     }
     if let Packet::Lap(_, lap) = packet {
         let offset = HEADER_SIZE + 57 * h.player as usize;
-        let position = if lap.race_gaps[0].is_some() { 2 } else { 1 };
+        let position = if lap.position == 0 {
+            if lap.race_gaps[0].is_some() { 2 } else { 1 }
+        } else {
+            lap.position
+        };
         b[offset + 32] = position;
         b[offset + 33] = lap.current_lap;
         b[offset + 44] = lap.driver_status;
@@ -241,7 +278,9 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
             c[17..19].copy_from_slice(&s.max_rpm.to_le_bytes());
             c[37..41].copy_from_slice(&s.ers_joules.to_le_bytes());
             c[41] = s.deploy_mode;
+            c[42..46].copy_from_slice(&s.harvested_mguk_joules.to_le_bytes());
             c[50..54].copy_from_slice(&s.harvest_limit_joules.to_le_bytes());
+            c[54..58].copy_from_slice(&s.deployed_joules.to_le_bytes());
             c[58] = s.paused as u8;
             c[28] = s.fia_flag.unwrap_or(255);
         }

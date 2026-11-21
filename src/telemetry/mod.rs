@@ -8,7 +8,7 @@ pub use alerts::{ALERT_TTL, RaceAlert};
 pub use gaps::{GapReading, GapTrend};
 pub use protocol::{
     Aero, CarGap, CarStatus, CarTelemetry, Damage, Header, LapData, LapHistory, Packet, ParseError,
-    RaceControl, SessionData, parse,
+    Participants, RaceControl, SessionData, parse,
 };
 pub use state::{Connection, Snapshot, TelemetryState, Timed};
 

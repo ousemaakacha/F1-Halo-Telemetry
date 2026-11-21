@@ -1,12 +1,13 @@
 use super::{
-    Aero, CarStatus, CarTelemetry, Damage, ErsCapacity, GapReading, Header, LapHistory, Packet,
-    RaceAlert, SessionData, alerts::AlertTracker, gaps::GapTracker,
+    Aero, CarGap, CarStatus, CarTelemetry, Damage, ErsCapacity, GapReading, Header, LapHistory,
+    Packet, Participants, RaceAlert, SessionData, alerts::AlertTracker, gaps::GapTracker,
 };
 use std::time::{Duration, Instant};
 
 pub const FAST_TTL: Duration = Duration::from_millis(500);
 pub const DAMAGE_TTL: Duration = Duration::from_secs(2);
 pub const HISTORY_TTL: Duration = Duration::from_secs(5);
+pub const PARTICIPANTS_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Connection {
@@ -68,6 +69,7 @@ pub struct NetworkCounters {
 pub struct Snapshot {
     pub source_epoch: u64,
     pub ers_capacity: Option<ErsCapacity>,
+    pub ers_deploy_limit_joules: Option<f32>,
     pub header: Option<Header>,
     pub telemetry: Option<Timed<CarTelemetry>>,
     pub status: Option<Timed<CarStatus>>,
@@ -83,6 +85,10 @@ pub struct Snapshot {
     pub session: Option<Timed<SessionData>>,
     pub formula: Option<u8>,
     pub participants: Option<u8>,
+    pub driver_names: Option<Timed<Participants>>,
+    pub race_position: Option<Timed<u8>>,
+    pub preceding_car: Option<Timed<u8>>,
+    pub following_car: Option<Timed<u8>>,
     pub source: Connection,
     pub counters: NetworkCounters,
     pub last_packet: Option<Instant>,
@@ -90,6 +96,14 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn participant_name(&self, index: u8, now: Instant) -> Option<&str> {
+        self.driver_names
+            .as_ref()
+            .filter(|names| self.driving(now) && names.fresh(now, PARTICIPANTS_TTL))?
+            .value
+            .name(index)
+    }
+
     pub fn connection(&self, now: Instant) -> Connection {
         if matches!(self.source, Connection::BindError | Connection::Unsupported) {
             return self.source;
@@ -167,6 +181,17 @@ impl Snapshot {
             .map_or([None; 2], |gaps| gaps.value)
     }
 
+    pub fn race_opponents(&self, now: Instant) -> [Option<CarGap>; 2] {
+        let gaps = self.race_gaps(now);
+        let cars = [self.preceding_car, self.following_car];
+        std::array::from_fn(|i| {
+            Some(CarGap {
+                car_index: cars[i].filter(|car| car.fresh(now, FAST_TTL))?.value,
+                millis: gaps[i]?.millis,
+            })
+        })
+    }
+
     pub fn freshness_mask(&self, now: Instant) -> u16 {
         (self.driving(now) as u16)
             | ((self.status.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 1)
@@ -206,6 +231,8 @@ impl TelemetryState {
 
     pub fn invalidate_race_gaps(&mut self) {
         self.snapshot.race_gaps = None;
+        self.snapshot.preceding_car = None;
+        self.snapshot.following_car = None;
         self.gap_trackers = Default::default();
     }
 
@@ -214,6 +241,7 @@ impl TelemetryState {
         self.snapshot.race_alerts = [None; 5];
         self.alert_tracker = AlertTracker::default();
         self.snapshot.ers_capacity = None;
+        self.snapshot.ers_deploy_limit_joules = None;
         self.snapshot.telemetry = None;
         self.snapshot.status = None;
         self.snapshot.damage = None;
@@ -226,6 +254,8 @@ impl TelemetryState {
         self.snapshot.session = None;
         self.snapshot.formula = None;
         self.snapshot.participants = None;
+        self.snapshot.driver_names = None;
+        self.snapshot.race_position = None;
         self.sequence = [None; 17];
     }
 
@@ -371,6 +401,17 @@ impl TelemetryState {
                 }
             }
             Packet::Lap(_, lap) if !self.ended => {
+                self.snapshot.race_position = timed!(lap.position);
+                self.snapshot.preceding_car = lap.race_gaps[0].map(|gap| Timed {
+                    value: gap.car_index,
+                    received: now,
+                    overall_frame: h.overall_frame,
+                });
+                self.snapshot.following_car = lap.race_gaps[1].map(|gap| Timed {
+                    value: gap.car_index,
+                    received: now,
+                    overall_frame: h.overall_frame,
+                });
                 self.snapshot.lap_status = timed!(lap.result_status);
                 self.snapshot.driver_status = timed!(lap.driver_status);
                 self.snapshot.current_lap = timed!(lap.current_lap);
@@ -397,7 +438,10 @@ impl TelemetryState {
             Packet::History(_, history) if !self.ended => {
                 self.snapshot.lap_history = timed!(history)
             }
-            Packet::Participants(_, n) => self.snapshot.participants = Some(n),
+            Packet::Participants(_, names) => {
+                self.snapshot.participants = Some(names.active_cars);
+                self.snapshot.driver_names = timed!(names);
+            }
             Packet::Event(_, code) => match &code {
                 b"SEND" => {
                     self.clear_values();

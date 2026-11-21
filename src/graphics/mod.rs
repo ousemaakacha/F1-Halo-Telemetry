@@ -543,6 +543,14 @@ impl Painter<'_> {
             self.context.FillRectangle(&r, self.brush);
         }
     }
+    pub fn clipped(&self, bounds: D2D_RECT_F, draw: impl FnOnce(&Self)) {
+        unsafe {
+            self.context
+                .PushAxisAlignedClip(&bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            draw(self);
+            self.context.PopAxisAlignedClip();
+        }
+    }
     pub fn rounded(&self, r: D2D_RECT_F, radius: f32, rgb: [u8; 3], opacity: f32) {
         self.brush(rgb, opacity);
         unsafe {
@@ -625,6 +633,23 @@ impl Painter<'_> {
                 },
             );
             self.context.SetTransform(&(rotation * previous));
+            draw(self);
+            self.context.SetTransform(&previous);
+        }
+    }
+    pub fn stretched(&self, centre: (f32, f32), scale: (f32, f32), draw: impl FnOnce(&Self)) {
+        unsafe {
+            let mut previous = Matrix3x2::default();
+            self.context.GetTransform(&mut previous);
+            self.context.SetTransform(
+                &(Matrix3x2 {
+                    M11: scale.0,
+                    M22: scale.1,
+                    M31: centre.0 * (1.0 - scale.0),
+                    M32: centre.1 * (1.0 - scale.1),
+                    ..Default::default()
+                } * previous),
+            );
             draw(self);
             self.context.SetTransform(&previous);
         }
@@ -731,6 +756,35 @@ impl Painter<'_> {
             len: 0,
         };
         let _ = text.write_fmt(value);
+        self.curved_text(text.as_str(), curve, font, rgb);
+    }
+    pub fn curved_text_ellipsized(&self, value: &str, curve: &TextCurve, font: Font, rgb: [u8; 3]) {
+        let advance = |character: char| {
+            let index = (character as usize)
+                .checked_sub(32)
+                .filter(|&index| index < 95)
+                .unwrap_or((b'?' - 32) as usize);
+            self.advances[font.index()][index]
+        };
+        if value.chars().map(advance).sum::<f32>() <= curve.length() {
+            self.curved_text(value, curve, font, rgb);
+            return;
+        }
+        // Keep the type size; long driver names give way to an ellipsis.
+        let available = curve.length() - 3.0 * advance('.');
+        let mut width = 0.0;
+        let mut text = TextBuffer {
+            bytes: [0; 192],
+            len: 0,
+        };
+        for character in value.chars() {
+            width += advance(character);
+            if width > available || text.len + character.len_utf8() + 3 > text.bytes.len() {
+                break;
+            }
+            let _ = text.write_char(character);
+        }
+        let _ = text.write_str("...");
         self.curved_text(text.as_str(), curve, font, rgb);
     }
     pub fn geometry(&self, geometry: &ID2D1PathGeometry, rgb: [u8; 3], opacity: f32) {

@@ -1,4 +1,3 @@
-mod carbon;
 pub mod halo;
 pub mod tyres;
 

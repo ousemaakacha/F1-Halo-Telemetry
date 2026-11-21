@@ -59,7 +59,7 @@ Offset relativi all'inizio del record vettura:
 | Pacchetto | Campi usati e offset |
 | --- | --- |
 | Car Telemetry | speed u16=0; throttle f32=2; brake f32=10; gear i8=15; RPM u16=16; rev%=19; LED u16=20; surface[4] u8=30; inner[4] u8=34 |
-| Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvest limit f32=50; networkPaused u8=58 |
+| Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvested MGU-K f32=42; harvest limit f32=50; deployed energy f32=54; networkPaused u8=58 |
 | Car Damage | wear[4] f32=0,4,8,12 |
 | Car Telemetry 2 | aeroMode u8=0; aeroAvailable u8=1; aeroDistance u16=2; overtakeAvailable u8=4; overtakeActive u8=5; overtakeDistance u16=6; regulations2026 u8=8 |
 | Lap Data | deltaToCarInFrontMSPart u16=14; deltaToCarInFrontMinutesPart u8=16; carPosition u8=32; currentLapNum u8=33; driverStatus u8=44; resultStatus u8=45 |
@@ -119,8 +119,26 @@ finiti. Straight Mode usa prima `activeAeroMode` per **SM ON**, poi
 `activeAeroAvailable` per **SM READY**; altrimenti mostra **SM OFF** con
 `activeAeroActivationDistance` soltanto se maggiore di zero. Zero significa
 assenza di una distanza di attivazione, non conferma di ingresso in zona.
+f1 tv mostra il residuo per giro RECHARGE usando
+`max(0, ersHarvestLimitPerLap - ersHarvestedThisLapMGUK)` e DEPLOY usando
+`max(0, DeployLimitMGUK - ersDeployedThisLap)`. Quest'ultimo limite proviene
+dai file del gioco, selezionato per stagione e uniforme tra le vetture.
+I contatori UDP si azzerano a ogni giro; non vengono integrati localmente.
+I nuovi valori usati dal parser devono essere finiti e non negativi. MGU-H
+a offset 46 non viene sottratto dal budget MGU-K. Una capacità batteria di
+4 MJ non viene usata come limite del giro.
 Participants legge numActiveCars a offset assoluto 29. Non presume che gli slot
 validi siano contigui: l'attività locale è verificata con resultStatus.
+Per f1 tv conserva anche i nomi UTF-8: record Participants a offset assoluto
+30, stride 60, nome a offset record 10, massimo 32 byte. Ogni nome viene
+terminato al primo NUL; UTF-8 non valido e caratteri di controllo non vengono
+mostrati. I nomi scadono dopo dieci secondi e si azzerano con il resto dello
+snapshot ai cambi di sessione, sorgente e timeline. La posizione locale viene
+letta da Lap Data +32. Le identità degli avversari davanti e dietro vengono
+conservate dalla selezione univoca di auto attive già usata da Shift per i
+due distacchi. f1 tv associa ciascun nome al relativo intervallo dello stesso
+Lap Data. Dati scaduti, avversari assenti o ambigui, pausa e cambi di timeline
+svuotano i due abbinamenti; non viene sostituito un avversario con il pilota locale.
 
 ## Ordinamento e validità
 

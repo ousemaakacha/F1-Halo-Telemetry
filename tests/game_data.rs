@@ -1,6 +1,6 @@
 //! Authored miniature ERPK/BXML fixtures; no EA game content is redistributed.
 use f1_halo_telemetry::{
-    game_data::{BatteryCatalog, capacity_from_bxml, read_archive},
+    game_data::{BatteryCatalog, capacity_from_bxml, deploy_limit_from_bxml, read_archive},
     telemetry::{Aero, CapacitySource, Snapshot, state::Timed},
 };
 use std::{
@@ -32,6 +32,21 @@ fn document(value: &str) -> Vec<u8> {
         out.extend(record(5, 0, &[]));
     }
     out.extend(record(6, 0, &[]));
+    out
+}
+
+fn document_with_deploy(capacity: &str, deploy: &str) -> Vec<u8> {
+    let mut out = document(capacity);
+    let before_common_close = out.len() - 24;
+    let entry = record(
+        0,
+        1,
+        format!("DeployLimitMGUK\0value\0{deploy}\0").as_bytes(),
+    );
+    out.splice(
+        before_common_close..before_common_close,
+        entry.into_iter().chain(record(5, 0, &[])),
+    );
     out
 }
 
@@ -206,4 +221,61 @@ fn catalog_uses_game_values_only_for_matching_formula_and_uniform_cars() {
     assert!(!catalog.errors.is_empty());
     snapshot.formula = Some(0);
     assert_eq!(catalog.resolve(&snapshot).unwrap().year, 2025);
+}
+
+#[test]
+fn deploy_limit_is_independent_of_capacity_and_optional_bad_values_do_not_hide_the_battery() {
+    let document = document_with_deploy("4e6", "13e6");
+    assert_eq!(capacity_from_bxml(&document).unwrap(), Some(4_000_000.0));
+    assert_eq!(
+        deploy_limit_from_bxml(&document).unwrap(),
+        Some(13_000_000.0)
+    );
+    for value in ["NaN", "inf", "-1", "0", "100000001", "wat"] {
+        let bad = document_with_deploy("4e6", value);
+        assert!(deploy_limit_from_bxml(&bad).is_err());
+        assert_eq!(capacity_from_bxml(&bad).unwrap(), Some(4_000_000.0));
+        let temp = Temp::new();
+        let records = read_archive(&temp.write("optional.erp", &archive(3, &bad, true))).unwrap();
+        assert_eq!(records[0].joules, 4_000_000.0);
+        assert_eq!(records[0].deploy_limit_joules, None);
+    }
+    let mut outside_base = b"\x01BXML".to_vec();
+    for tag in ["VTF", "Upgrade", "EnergyRecoverySystem", "Common"] {
+        outside_base.extend(record(0, 0, format!("{tag}\0").as_bytes()));
+    }
+    outside_base.extend(record(0, 1, b"DeployLimitMGUK\0value\x009999999\0"));
+    for _ in 0..5 {
+        outside_base.extend(record(5, 0, &[]));
+    }
+    assert_eq!(deploy_limit_from_bxml(&outside_base).unwrap(), None);
+}
+
+#[test]
+fn catalog_selects_deploy_limits_by_season_and_rejects_mixed_limits_without_changing_capacity() {
+    let temp = Temp::new();
+    for (year, limit) in [(2025, "4e6"), (2026, "13e6")] {
+        temp.write(
+            &format!("2025_asset_groups/f1_{year}_vehicle_package/teams/common.erp"),
+            &archive(3, &document_with_deploy("4e6", limit), true),
+        );
+    }
+    let catalog = BatteryCatalog::from_game_root(&temp.0);
+    let mut snapshot = Snapshot {
+        formula: Some(13),
+        ..Snapshot::default()
+    };
+    assert_eq!(catalog.resolve_deploy_limit(&snapshot), Some(13_000_000.0));
+    snapshot.formula = Some(0);
+    assert_eq!(catalog.resolve_deploy_limit(&snapshot), Some(4_000_000.0));
+    snapshot.formula = Some(2);
+    assert_eq!(catalog.resolve_deploy_limit(&snapshot), None);
+    snapshot.formula = Some(13);
+    temp.write(
+        "2025_asset_groups/f1_2026_vehicle_package/teams/example/wep/example.erp",
+        &archive(4, &document_with_deploy("4e6", "12e6"), false),
+    );
+    let catalog = BatteryCatalog::from_game_root(&temp.0);
+    assert_eq!(catalog.resolve_deploy_limit(&snapshot), None);
+    assert_eq!(catalog.resolve(&snapshot).unwrap().joules, 4_000_000.0);
 }

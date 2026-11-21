@@ -1,4 +1,4 @@
-//! Reads nominal ERS capacity from the installed game's ERPK/BXML handling data.
+//! Reads nominal ERS capacity and lap deployment limits from the installed game's ERPK/BXML handling data.
 //! No process memory is opened, and game files are never written or extracted.
 use crate::telemetry::{CapacitySource, ErsCapacity, Snapshot};
 use std::{
@@ -64,11 +64,20 @@ pub struct CapacityRecord {
     pub archive: PathBuf,
     pub resource: String,
     pub joules: f32,
+    pub deploy_limit_joules: Option<f32>,
 }
 
 /// A small streaming BXML reader. Only the base VTF/ERS/Common value counts;
 /// an R&D upgrade or an unrelated field named Capacity is not a denominator.
 pub fn capacity_from_bxml(data: &[u8]) -> io::Result<Option<f32>> {
+    nominal_ers_value_from_bxml(data, "EnergyStoreCapacity")
+}
+
+pub fn deploy_limit_from_bxml(data: &[u8]) -> io::Result<Option<f32>> {
+    nominal_ers_value_from_bxml(data, "DeployLimitMGUK")
+}
+
+fn nominal_ers_value_from_bxml(data: &[u8], field: &str) -> io::Result<Option<f32>> {
     if data.len() as u64 > MAX_VTF || !data.starts_with(b"\x01BXML") {
         return Err(invalid("unsupported handling document"));
     }
@@ -117,23 +126,16 @@ pub fn capacity_from_bxml(data: &[u8]) -> io::Result<Option<f32>> {
                     }
                 }
                 stack.push(name);
-                if stack
-                    == [
-                        "VTF",
-                        "EnergyRecoverySystem",
-                        "Common",
-                        "EnergyStoreCapacity",
-                    ]
-                {
+                if stack == ["VTF", "EnergyRecoverySystem", "Common", field] {
                     if capacity.is_some() || operation.is_some_and(|v| v != "=") {
-                        return Err(invalid("ambiguous nominal battery capacity"));
+                        return Err(invalid("ambiguous nominal ERS value"));
                     }
                     let number: f64 = value
-                        .ok_or_else(|| invalid("missing battery capacity"))?
+                        .ok_or_else(|| invalid("missing nominal ERS value"))?
                         .parse()
-                        .map_err(|_| invalid("invalid battery capacity"))?;
+                        .map_err(|_| invalid("invalid nominal ERS value"))?;
                     if !number.is_finite() || number <= 0.0 || number > 100_000_000.0 {
-                        return Err(invalid("battery capacity outside supported range"));
+                        return Err(invalid("nominal ERS value outside supported range"));
                     }
                     capacity = Some(number as f32);
                 }
@@ -302,10 +304,13 @@ pub fn read_archive(path: &Path) -> io::Result<Vec<CapacityRecord>> {
         };
         let joules = capacity_from_bxml(&decoded)?
             .ok_or_else(|| invalid("handling has no nominal ERS capacity"))?;
+        // An invalid optional deploy limit must not discard the existing battery capacity.
+        let deploy_limit_joules = deploy_limit_from_bxml(&decoded).ok().flatten();
         records.push(CapacityRecord {
             archive: path.to_owned(),
             resource,
             joules,
+            deploy_limit_joules,
         });
     }
     Ok(records)
@@ -317,6 +322,7 @@ pub struct BatteryCatalog {
     pub records: Vec<CapacityRecord>,
     pub errors: Vec<String>,
     capacities: [Option<f32>; 2],
+    deploy_limits: [Option<f32>; 2],
 }
 
 impl BatteryCatalog {
@@ -368,6 +374,10 @@ impl BatteryCatalog {
             // routing before supporting mods with different nominal capacities per car.
             if !failed {
                 catalog.capacities[slot] = uniform;
+                catalog.deploy_limits[slot] = records
+                    .first()
+                    .and_then(|r| r.deploy_limit_joules)
+                    .filter(|&limit| records.iter().all(|r| r.deploy_limit_joules == Some(limit)));
             }
             if uniform.is_none() && !records.is_empty() {
                 catalog
@@ -379,17 +389,25 @@ impl BatteryCatalog {
     }
 
     pub fn resolve(&self, snapshot: &Snapshot) -> Option<ErsCapacity> {
-        let year = match snapshot.formula {
+        let year = Self::season(snapshot)?;
+        self.capacities[usize::from(year == 2026)].map(|joules| ErsCapacity {
+            joules,
+            year,
+            source: CapacitySource::GameFiles,
+        })
+    }
+
+    pub fn resolve_deploy_limit(&self, snapshot: &Snapshot) -> Option<f32> {
+        self.deploy_limits[usize::from(Self::season(snapshot)? == 2026)]
+    }
+
+    fn season(snapshot: &Snapshot) -> Option<u16> {
+        Some(match snapshot.formula {
             Some(13) => 2026,
             Some(0) => 2025,
             Some(_) => return None,
             None if snapshot.aero.is_some_and(|a| a.value.regulations_2026) => 2026,
             None => return None,
-        };
-        self.capacities[usize::from(year == 2026)].map(|joules| ErsCapacity {
-            joules,
-            year,
-            source: CapacitySource::GameFiles,
         })
     }
 }

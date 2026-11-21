@@ -1,6 +1,6 @@
 use crate::{
     graphics::{Font::*, *},
-    settings::{HaloModel, Settings, TyreMode},
+    settings::{Settings, TyreMode},
     telemetry::{
         state::{DAMAGE_TTL, FAST_TTL},
         *,
@@ -15,14 +15,12 @@ const COLUMN_WIDTH: f32 = 82.0;
 
 pub struct Tyres {
     car: ID2D1Bitmap1,
-    carbon: carbon::Carbon,
 }
 
 impl Tyres {
     pub fn new(graphics: &Graphics) -> Result<Self> {
         Ok(Self {
             car: graphics.bitmap(include_bytes!("../../assets/tyre-car-transparent.png"))?,
-            carbon: carbon::Carbon::new(graphics)?,
         })
     }
 
@@ -34,14 +32,7 @@ impl Tyres {
         edit: bool,
         now: Instant,
     ) {
-        if settings.halo_model == HaloModel::Carbon {
-            self.carbon.draw(p, snapshot, settings, now);
-            if edit {
-                super::edit_frame(p, WIDTH, HEIGHT, crate::hud::carbon::RED);
-            }
-        } else {
-            draw(p, &self.car, snapshot, settings, edit, now);
-        }
+        draw(p, &self.car, snapshot, settings, edit, now);
     }
 }
 
@@ -185,4 +176,3 @@ mod tests {
         assert_eq!(overall_wear(None), None);
     }
 }
-mod carbon;

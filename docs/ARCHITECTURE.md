@@ -72,7 +72,7 @@ Windows Imaging Component decodifica il PNG in BGRA premoltiplicato una volta
 per device. Direct2D riutilizza la bitmap, conserva le proporzioni verticali
 e la ricrea insieme alle altre risorse grafiche dopo un reset.
 
-`HaloModel` seleziona Wide, Classic, Modern, Carbon o Shift sullo stesso canvas
+`HaloModel` seleziona Modern, Shift o f1 tv sullo stesso canvas
 1000 × 300. Shift riusa direttamente `Modern::draw_frame` per il materiale,
 il bordo e l'arco superiore, senza modificare il renderer Modern originale.
 I riquadri dedicati hanno gli stessi limiti angolari esterni, da 12° a 28°

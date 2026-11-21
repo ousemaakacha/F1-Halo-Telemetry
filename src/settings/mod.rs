@@ -34,29 +34,24 @@ impl TyreMode {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub enum HaloModel {
     #[default]
-    Wide,
-    Classic,
+    #[serde(alias = "Wide", alias = "Classic", alias = "Carbon")]
     Modern,
-    Carbon,
     Shift,
+    Replica,
 }
 
 impl HaloModel {
-    pub const ALL: [Self; 5] = [
-        Self::Wide,
-        Self::Classic,
+    pub const ALL: [Self; 3] = [
         Self::Modern,
-        Self::Carbon,
         Self::Shift,
+        Self::Replica,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Wide => "Wide",
-            Self::Classic => "Classic",
             Self::Modern => "modern",
-            Self::Carbon => "Carbon (Halo + Tyres)",
             Self::Shift => "Shift",
+            Self::Replica => "f1 tv",
         }
     }
 }
@@ -422,7 +417,7 @@ mod tests {
         assert_eq!(settings.halo_profiles["Red Bull"], red_bull);
         settings.halo.visible = false;
         settings.halo.opacity = 0.37;
-        settings.halo_model = HaloModel::Classic;
+        settings.halo_model = HaloModel::Modern;
         let tyres = serde_json::to_value(settings.tyres).unwrap();
         settings.load_halo_profile("ferrari").unwrap();
         assert_eq!(
@@ -431,7 +426,7 @@ mod tests {
         );
         assert!(!settings.halo.visible);
         assert_eq!(settings.halo.opacity, 0.37);
-        assert_eq!(settings.halo_model, HaloModel::Classic);
+        assert_eq!(settings.halo_model, HaloModel::Modern);
         assert_eq!(serde_json::to_value(settings.tyres).unwrap(), tyres);
         assert!(!settings.effective_layouts(false, false)[0].visible);
         assert!(!settings.effective_layouts(true, true)[0].visible);
@@ -614,7 +609,7 @@ mod tests {
     fn halo_models_default_for_legacy_profiles_and_round_trip_without_moving_layouts() {
         let legacy = r#"{"halo":{"x":440,"y":450,"scale":1.04,"opacity":0.94}}"#;
         let mut settings: Settings = serde_json::from_str(legacy).unwrap();
-        assert_eq!(settings.halo_model, HaloModel::Wide);
+        assert_eq!(settings.halo_model, HaloModel::Modern);
         let original_layout = serde_json::to_value(settings.halo).unwrap();
         for model in HaloModel::ALL {
             settings.halo_model = model;
@@ -627,6 +622,13 @@ mod tests {
             );
         }
         assert!(serde_json::from_str::<Settings>(r#"{"halo_model":"Unknown"}"#).is_err());
+        for removed in ["Wide", "Classic", "Carbon"] {
+            let legacy = format!(r#"{{"halo_model":"{removed}"}}"#);
+            assert_eq!(
+                serde_json::from_str::<Settings>(&legacy).unwrap().halo_model,
+                HaloModel::Modern
+            );
+        }
     }
 
     #[test]

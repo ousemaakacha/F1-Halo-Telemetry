@@ -154,8 +154,20 @@ Aumenta il valore per ridurre la trasparenza del fondo, oppure usa **0%** per
 eliminarlo. Premi **Apply and save**. Le percentuali vengono ripristinate al
 riavvio; i file impostazioni precedenti restano compatibili.
 
-**Halo model** permette di scegliere **Wide**, **Classic**, **modern**,
-**Carbon (Halo + Tyres)** oppure **Shift**. Shift usa il fondo e il bordo di
+**Halo model** permette di scegliere **modern**, **Shift** oppure **f1 tv**.
+Il modello **f1 tv** riprende gli indicatori del riferimento McLaren con le curvature di
+Shift, ali speculari, arco e quadrante centrati: km/h e mph, modalità ERS attuale,
+OVERTAKE e batteria con percentuale, fasce blu RCH/DPL con residuo per giro, pedali segmentati,
+classifica curva a sinistra e ACTIVE AERO, marce e RPM su righe separate a destra.
+La scritta **RPM** mostra i giri attuali per intero, per esempio **RPM 10000**.
+Ogni lineetta ACTIVE AERO ha un bordo verde quando è attivo, rosso quando è inattivo.
+La riga sinistra superiore mostra il pilota immediatamente davanti, quella
+inferiore il pilota dietro: posizione, nome e distacco in secondi, per esempio
+**1.234s**, con una colonna dedicata ai tempi. Selezionare il modello e premere
+**Apply and save**, poi regolare posizione e scala in Edit Mode sulla propria
+visuale. [Anteprima e dettagli f1 tv](docs/REPLICA.md).
+
+Shift usa il fondo e il bordo di
 Modern con una disposizione dedicata e simmetrica. Al centro la marcia grande
 è l'informazione principale, con velocità in **km/h e mph** e anello contagiri;
 il valore numerico RPM non viene mostrato. A sinistra **AHEAD** e **BEHIND** mostrano in
@@ -195,23 +207,15 @@ hanno precedenza. Penalità e warning richiedono un confronto con un campione
 recente: i totali già presenti all'avvio non vengono notificati come nuovi.
 Non si deducono danni, cause delle penalità o rientri SC non forniti dai dati
 decodificati. Dettagli e limiti: [contratto UDP](docs/PROTOCOL.md).
-Carbon applica insieme i due nuovi design: Halo ad
-arco con quadrante circolare, bordo rosso, trama carbonio e caratteri corsivi;
-pannello pneumatici coordinato con monoposto argento/nero/rosso, usura media,
-barre segmentate e temperature Surface/Inner. Tutti i valori sono live;
-la scelta viene salvata e si applica con **Apply and save** senza riavvio.
-Tornando agli altri modelli viene ripristinato anche il pannello gomme precedente.
-Il fondo grigio delle immagini di riferimento non viene mostrato sopra il gioco.
-Dettagli e asset: [design Carbon](docs/CARBON.md).
-
 Modern segue il nuovo riferimento: fascia antracite continua con gradiente,
 estremità arrotondate, bordo arancione, arco superiore sottile e quadrante più
 grande. Fuel, Straight Mode, distacco live da chi segue e marce restano integrati nella fascia.
 Premere **Apply and save**: il cambio avviene
 senza riavviare l'app e conserva centro del quadrante, posizione, scala e opacità.
-La scelta viene salvata e ripristinata all'avvio. I profili precedenti usano Wide.
-Tutti i modelli mostrano le stesse telemetrie aggiornate: km/h, percentuale e
-modalità ERS, Fuel, pedali, Straight Mode con distanza, distacco live da chi segue, marce e RPM.
+La scelta viene salvata e ripristinata all'avvio. I file impostazioni con Wide,
+Classic o Carbon vengono aperti usando modern. Modern e Shift mostrano le
+telemetrie aggiornate: km/h, percentuale e modalità ERS, Fuel, pedali, Straight
+Mode con distanza, distacco live da chi segue, marce e RPM.
 
 **Halo profile** salva posizioni e dimensioni diverse con nomi scelti da te,
 per esempio **Ferrari** e **Red Bull**:
@@ -240,12 +244,7 @@ visibile quando cambiano monitor o risoluzione.
 
 ## Dati e disponibilità
 
-Il modello Ampio segue il bordo interno della protezione della vettura con un'arcata più
-ampia e aperta, ricavata dalle guide del riferimento. Le ali sono circa il 23%
-più larghe; il canvas misura 1000 × 300 unità. Quadrante e caratteri conservano
-le proprie dimensioni, mentre i contenuti laterali seguono la nuova curva.
-Classico riprende le ali compatte e inclinate e il profilo superiore bianco.
-I due modelli condividono il canvas, i colori configurabili e tutti i dati guida.
+L'HUD usa un canvas da 1000 × 300 unità, colori configurabili e tutti i dati guida.
 Il quadrante centrale mantiene la velocità grande in km/h. Al posto della
 scritta KM/H, sopra la velocità mostra la marcia corrente **R/N/1–8**; sotto,
 la percentuale ERS. La percentuale

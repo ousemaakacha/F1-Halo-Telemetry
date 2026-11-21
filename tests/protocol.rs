@@ -739,6 +739,45 @@ fn status_offsets_include_new_harvest_limit() {
 }
 
 #[test]
+fn lap_energy_counters_use_mguk_and_deployed_offsets_and_reject_invalid_values() {
+    let mut bytes = wire(7, 23, 600);
+    let offset = 29 + 59 * 23;
+    for (field, value) in [
+        (37, 1_400_000.0_f32),
+        (42, 3_000_000.0),
+        (46, 99_000_000.0),
+        (50, 8_500_000.0),
+        (54, 6_000_000.0),
+    ] {
+        bytes[offset + field..offset + field + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    let Packet::Status(_, status) = parse(&bytes).unwrap() else {
+        panic!()
+    };
+    assert_eq!(status.ers_joules, 1_400_000.0);
+    assert_eq!(status.harvested_mguk_joules, 3_000_000.0);
+    assert_eq!(status.harvest_limit_joules, 8_500_000.0);
+    assert_eq!(status.deployed_joules, 6_000_000.0);
+    for field in [42, 54] {
+        for invalid in [-1.0_f32, f32::NAN, f32::INFINITY] {
+            let mut invalid_bytes = bytes.clone();
+            invalid_bytes[offset + field..offset + field + 4]
+                .copy_from_slice(&invalid.to_le_bytes());
+            assert!(parse(&invalid_bytes).is_err());
+        }
+    }
+    let mut state = TelemetryState::default();
+    let now = Instant::now();
+    state.apply(parse(&bytes).unwrap(), now);
+    state.snapshot.ers_deploy_limit_joules = Some(13_000_000.0);
+    let mut new_session = wire(6, 23, 1);
+    new_session[7..15].copy_from_slice(&43u64.to_le_bytes());
+    state.apply(parse(&new_session).unwrap(), now);
+    assert!(state.snapshot.ers_deploy_limit_joules.is_none());
+    assert!(state.snapshot.status.is_none());
+}
+
+#[test]
 fn fuel_margin_accepts_signed_values_but_rejects_non_finite_udp_data() {
     for player in [0, 23] {
         for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
@@ -883,13 +922,159 @@ fn arbitrary_datagrams_never_panic() {
 
 #[test]
 fn demo_packets_round_trip_without_changing_data() {
-    let mut bytes = [0u8; 1460];
+    let mut bytes = [0u8; protocol::PARTICIPANTS_SIZE];
     for seconds in [0.0, 4.0, 8.0, 9.99, 10.0, 12.0, 16.0, 18.0, 1028.0] {
         for packet in demo::sample(seconds, 720) {
             let n = demo::encode(packet, &mut bytes);
             assert_eq!(parse(&bytes[..n]).unwrap(), packet);
         }
     }
+}
+
+#[test]
+fn participant_names_use_the_documented_stride_and_preserve_utf8_without_trusting_bad_text() {
+    let mut bytes = wire(4, 23, 600);
+    bytes[29] = 2;
+    let local = 30 + 60 * 23 + 10;
+    bytes[local..local + 6].copy_from_slice(b"NORRIS");
+    let other = 30 + 60 * 4 + 10;
+    let name = "LÉCLERC".as_bytes();
+    bytes[other..other + name.len()].copy_from_slice(name);
+    let Packet::Participants(_, participants) = parse(&bytes).unwrap() else {
+        panic!()
+    };
+    assert_eq!(participants.active_cars, 2);
+    assert_eq!(participants.name(23), Some("NORRIS"));
+    assert_eq!(participants.name(4), Some("LÉCLERC"));
+    assert_eq!(participants.name(0), None);
+    assert_eq!(participants.name(24), None);
+    for invalid in [0xff, b'\n'] {
+        bytes[other] = invalid;
+        let Packet::Participants(_, participants) = parse(&bytes).unwrap() else {
+            panic!()
+        };
+        assert_eq!(participants.name(4), None);
+        assert_eq!(participants.name(23), Some("NORRIS"));
+    }
+    bytes[local..local + 32].fill(b'A');
+    let Packet::Participants(_, participants) = parse(&bytes).unwrap() else {
+        panic!()
+    };
+    assert_eq!(
+        participants.name(23),
+        Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    );
+    assert!(parse(&bytes[..bytes.len() - 1]).is_err());
+    bytes[29] = 25;
+    assert!(parse(&bytes).is_err());
+}
+
+#[test]
+fn replica_standings_follow_race_order_and_names_expire_and_clear_on_session_change() {
+    let start = Instant::now();
+    let mut state = TelemetryState::default();
+    let now = race_sample(&mut state, start, 0, Some((0, 500)), Some((4, 2000)));
+    let mut bytes = wire(4, 23, 600);
+    bytes[29] = 3;
+    for (index, name) in [(23, "NORRIS"), (4, "STROLL"), (7, "LECLERC")] {
+        let offset = 30 + 60 * index + 10;
+        bytes[offset..offset + name.len()].copy_from_slice(name.as_bytes());
+    }
+    state.apply(parse(&bytes).unwrap(), now);
+    assert_eq!(state.snapshot.race_position.unwrap().value, 6);
+    assert_eq!(state.snapshot.following_car.unwrap().value, 4);
+    assert_eq!(state.snapshot.participant_name(23, now), Some("NORRIS"));
+    assert_eq!(state.snapshot.participant_name(4, now), Some("STROLL"));
+    let now = race_sample(&mut state, start, 1, Some((0, 500)), Some((7, 1000)));
+    assert_eq!(state.snapshot.following_car.unwrap().value, 7);
+    assert_eq!(state.snapshot.participant_name(7, now), Some("LECLERC"));
+    assert_eq!(
+        state
+            .snapshot
+            .participant_name(23, now + FAST_TTL + Duration::from_millis(1)),
+        None
+    );
+    let expired = start + PARTICIPANTS_TTL + Duration::from_millis(1);
+    state.apply(parse(&wire(6, 23, 1300)).unwrap(), expired);
+    assert_eq!(state.snapshot.participant_name(23, expired), None);
+    let mut new_session = wire(6, 23, 1);
+    new_session[7..15].copy_from_slice(&43u64.to_le_bytes());
+    state.apply(parse(&new_session).unwrap(), expired);
+    assert!(state.snapshot.driver_names.is_none());
+    assert!(state.snapshot.race_position.is_none());
+    assert!(state.snapshot.preceding_car.is_none());
+    assert!(state.snapshot.following_car.is_none());
+}
+
+#[test]
+fn f1_tv_opponents_pair_each_name_with_its_own_gap_and_clear_unavailable_rows() {
+    let start = Instant::now();
+    let mut state = TelemetryState::default();
+    let now = race_sample(&mut state, start, 0, Some((0, 1234)), Some((4, 832)));
+    let mut bytes = wire(4, 23, 600);
+    bytes[29] = 4;
+    for (index, name) in [(23, "NORRIS"), (0, "PIASTRI"), (4, "STROLL"), (7, "ALONSO")] {
+        let offset = 30 + 60 * index + 10;
+        bytes[offset..offset + name.len()].copy_from_slice(name.as_bytes());
+    }
+    state.apply(parse(&bytes).unwrap(), now);
+    let opponents = state.snapshot.race_opponents(now);
+    assert_eq!(
+        opponents,
+        [
+            Some(CarGap {
+                car_index: 0,
+                millis: 1234
+            }),
+            Some(CarGap {
+                car_index: 4,
+                millis: 832
+            })
+        ]
+    );
+    assert_eq!(
+        opponents.map(|opponent| state
+            .snapshot
+            .participant_name(opponent.unwrap().car_index, now)),
+        [Some("PIASTRI"), Some("STROLL")]
+    );
+    assert_eq!(
+        state
+            .snapshot
+            .race_opponents(now + FAST_TTL + Duration::from_millis(1)),
+        [None; 2]
+    );
+    let mut paused = state.snapshot;
+    paused.session.as_mut().unwrap().value.paused = true;
+    assert_eq!(paused.race_opponents(now), [None; 2]);
+    let now = race_sample(&mut state, start, 1, Some((7, 3210)), Some((4, 500)));
+    let ahead = state.snapshot.race_opponents(now)[0].unwrap();
+    assert_eq!(
+        ahead,
+        CarGap {
+            car_index: 7,
+            millis: 3210
+        }
+    );
+    assert_eq!(
+        state.snapshot.participant_name(ahead.car_index, now),
+        Some("ALONSO")
+    );
+    let now = race_sample(&mut state, start, 2, None, Some((4, 0)));
+    assert_eq!(
+        state.snapshot.race_opponents(now),
+        [
+            None,
+            Some(CarGap {
+                car_index: 4,
+                millis: 0
+            })
+        ]
+    );
+    assert!(state.snapshot.preceding_car.is_none());
+    state.invalidate_race_gaps();
+    assert_eq!(state.snapshot.race_opponents(now), [None; 2]);
+    assert!(state.snapshot.following_car.is_none());
 }
 
 #[test]

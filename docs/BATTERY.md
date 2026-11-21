@@ -61,5 +61,25 @@ Riferimenti di formato e provenienza:
 - [Documentazione dei parametri handling Swofty](https://f1.swofty.net/std/systems/car-physics.html)
 - [Parser di riferimento ERPK/BXML, sorgenti primari](https://github.com/Swofty-Developments/SwoftyLauncher)
 
-Il lettore dell'app è ristretto alla capacità ERS, con test sintetici indipendenti.
+Il lettore dell'app è ristretto ai parametri nominali ERS, con test sintetici indipendenti.
 Non usa i componenti di modifica, hook o launcher dei progetti di riferimento.
+
+## Limite nominale DEPLOY per giro
+
+Il lettore acquisisce anche il percorso esatto
+`VTF/EnergyRecoverySystem/Common/DeployLimitMGUK`, separato dalla capacità
+batteria. La selezione segue stagione e formula della capacità esistente,
+ma verifica la coerenza del limite DEPLOY indipendentemente. Limiti assenti,
+non validi o diversi tra le vetture producono un limite sconosciuto; una
+capacità batteria valida rimane disponibile.
+
+f1 tv sottrae il contatore UDP `ersDeployedThisLap` da questo limite. Il
+risultato è il budget nominale residuo del giro, non l'energia immediatamente
+presente nella batteria. RECHARGE usa invece il limite del giro comunicato
+via UDP, che tiene conto delle variazioni applicate dal gioco.
+
+La lettura locale del 21 novembre 2026 ha verificato 44 risorse senza errori:
+capacità batteria 4 MJ per entrambe le stagioni, limite DEPLOY 4 MJ per il 2025
+e 13 MJ per il 2026. Questi valori non sono codificati come fallback live:
+la Demo usa costanti separate e dichiarate. L'esempio `game_battery` esporta
+entrambi i parametri nel proprio JSON.
