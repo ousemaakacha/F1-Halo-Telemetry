@@ -1,5 +1,22 @@
 # Local verification
 
+## f1 tv: riquadri laterali più bassi — 22 novembre 2026
+
+Ridotta l'altezza radiale dei due riquadri da 100 a 80 unità (-20%), mantenendo
+centro, curvatura e simmetria. Ridotti i margini e riallineate le righe di
+classifica, marce, RPM e ACTIVE AERO. Font, dimensioni e proporzioni dei testi
+sono invariati; i bordi restano separati dalle scritte.
+
+Superati la build Release, i quattro test del modello, il controllo rustfmt
+sul file modificato e 30 scenari grafici nativi. Verificate le scale 1000×300 e 2000×600: il margine
+minimo misurato dei testi dal bordo è superiore a 8 unità logiche.
+Modern e Shift non presentano pixel modificati rispetto al codice precedente
+alla riduzione. [Anteprima](../artifacts/f1-tv-compact-preview.png) e
+[Aero inattivo](../artifacts/f1-tv-compact-aero-off.png).
+Il controllo rustfmt globale segnala formattazione preesistente in
+`src/hud/halo.rs` e `src/settings/mod.rs`, lasciata invariata.
+Nessuna nuova prova in gara.
+
 ## f1 tv: contorni delle lineette Aero e valori MJ rimossi — 21 novembre 2026
 
 Rimosso il riquadro comune di ACTIVE AERO. Ogni lineetta conserva il centro

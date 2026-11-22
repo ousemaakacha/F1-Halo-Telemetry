@@ -12,14 +12,14 @@ const DIAL: (f32, f32) = (CENTER_X, 104.0);
 const DIAL_REFERENCE: Point = (404.0, 150.0);
 const ORIGIN: (f32, f32) = (CONTENT_PADDING, 0.0);
 const WINGS: [(f32, f32); 2] = [(-31.5, -13.0), (13.0, 31.5)];
-const WING_TOP: f32 = -76.0;
-const WING_BOTTOM: f32 = 24.0;
-const NAME_ROWS: [f32; 2] = [WING_TOP + 27.0, WING_BOTTOM - 27.0];
+const WING_TOP: f32 = -66.0;
+const WING_BOTTOM: f32 = 14.0;
+const NAME_ROWS: [f32; 2] = [WING_TOP + 20.0, WING_BOTTOM - 20.0];
 const SPLIT_ROW: f32 = (WING_TOP + WING_BOTTOM) / 2.0;
-const META_ROW: f32 = WING_TOP + 17.0;
-const GEAR_ROW: f32 = WING_TOP + 40.0;
-const RPM_ROW: f32 = WING_TOP + 63.0;
-const RPM_CAPTION: f32 = WING_BOTTOM - 16.0;
+const META_ROW: f32 = WING_TOP + 13.0;
+const GEAR_ROW: f32 = WING_TOP + 34.0;
+const RPM_ROW: f32 = WING_TOP + 53.0;
+const RPM_CAPTION: f32 = WING_BOTTOM - 12.0;
 const FIRST_GEAR: f32 = 19.5;
 const LAST_GEAR: f32 = 30.5;
 type Point = (f32, f32);
@@ -294,7 +294,7 @@ impl Replica {
             names: NAME_ROWS.map(|offset| text_curve(-28.1, -18.9, offset)),
             positions: NAME_ROWS.map(|offset| text_curve(-30.9, -28.9, offset)),
             gaps: NAME_ROWS.map(|offset| text_curve(-18.0, -13.5, offset)),
-            aero: [META_ROW, META_ROW + 17.0].map(|offset| text_curve(13.7, 18.0, offset)),
+            aero: [META_ROW, META_ROW + 15.0].map(|offset| text_curve(13.7, 18.0, offset)),
             gears: std::array::from_fn(|i| {
                 let angle = FIRST_GEAR + i as f32 * (LAST_GEAR - FIRST_GEAR) / 8.0;
                 text_curve(angle - 0.6, angle + 0.6, GEAR_ROW)
@@ -547,13 +547,13 @@ impl Replica {
         for offset in [0.0, 11.0] {
             let (a, b) = if straight == Some(true) {
                 (
-                    wing_point(14.8, WING_TOP + 58.0 + offset),
-                    wing_point(17.0, WING_TOP + 58.0 + offset),
+                    wing_point(14.8, WING_TOP + 53.0 + offset),
+                    wing_point(17.0, WING_TOP + 53.0 + offset),
                 )
             } else {
                 (
-                    wing_point(15.1 + offset * 0.13, WING_TOP + 56.0),
-                    wing_point(14.5 + offset * 0.13, WING_BOTTOM - 27.0),
+                    wing_point(15.1 + offset * 0.13, WING_TOP + 51.0),
+                    wing_point(14.5 + offset * 0.13, WING_BOTTOM - 12.0),
                 )
             };
             let length = (b.0 - a.0).hypot(b.1 - a.1);
@@ -763,7 +763,7 @@ mod tests {
             }
             let upper = wing_point(angle, WING_TOP);
             let lower = wing_point(angle, WING_BOTTOM);
-            assert!(((upper.0 - lower.0).hypot(upper.1 - lower.1) - 100.0).abs() < 0.001);
+            assert!(((upper.0 - lower.0).hypot(upper.1 - lower.1) - 80.0).abs() < 0.001);
         }
         let mirror = |(x, y)| (2.0 * DIAL.0 - x, y);
         let right = [
@@ -803,14 +803,15 @@ mod tests {
     #[test]
     fn text_rows_leave_space_for_names_gears_rpm_and_panel_margins() {
         for row in NAME_ROWS {
-            assert!(row - WING_TOP >= 27.0 && WING_BOTTOM - row >= 27.0);
-            assert!((row - SPLIT_ROW).abs() >= 23.0);
+            assert!(row - WING_TOP - 11.0 >= 9.0 && WING_BOTTOM - row - 11.0 >= 9.0);
+            assert!((row - SPLIT_ROW).abs() - 11.0 >= 9.0);
         }
         const {
-            assert!(GEAR_ROW - META_ROW - 11.0 - 5.0 >= 7.0);
-            assert!(RPM_ROW - GEAR_ROW - 11.0 - 1.6 >= 8.0);
-            assert!(RPM_CAPTION - RPM_ROW - 5.0 - 1.6 >= 12.0);
-            assert!(WING_BOTTOM - RPM_CAPTION - 5.0 >= 10.0);
+            assert!(META_ROW - WING_TOP - 5.0 >= 8.0);
+            assert!(GEAR_ROW - META_ROW - 11.0 - 5.0 >= 5.0);
+            assert!(RPM_ROW - GEAR_ROW - 11.0 - 1.6 >= 6.0);
+            assert!(RPM_CAPTION - RPM_ROW - 5.0 - 1.6 >= 8.0);
+            assert!(WING_BOTTOM - RPM_CAPTION - 5.0 >= 7.0);
         }
         let gear_step = (modern::RADIUS - GEAR_ROW) * ((LAST_GEAR - FIRST_GEAR) / 8.0).to_radians();
         assert!(gear_step >= 17.5);

@@ -8,6 +8,9 @@ geometria simmetrica basata sulle curve di Shift. Si seleziona in
 
 Arco bianco e quadrante condividono il centro della finestra Halo. Le ali
 usano lo stesso raggio di Shift, estremi speculari, spessore e cornici uguali.
+I due riquadri laterali hanno altezza di 80 unità, ridotta del 20% rispetto
+alla versione precedente. Margini e righe sono riallineati senza ridurre
+dimensione o proporzioni dei testi.
 Testi, divisori e barra RPM seguono la medesima curvatura. La classifica ha
 due righe equidistanti; nomi lunghi terminano con `...` mantenendo la dimensione
 dei caratteri. A destra, GEARS, numeri delle marce, barra e didascalia RPM hanno
