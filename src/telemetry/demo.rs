@@ -39,6 +39,12 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 8] {
         Packet::Status(
             Header { packet_id: 7, ..h },
             CarStatus {
+                visual_compounds: std::array::from_fn(|car| match car {
+                    0 => 17,
+                    1 => 16,
+                    23 => 18,
+                    _ => 0,
+                }),
                 fuel_remaining_laps: 0.75 + phase * 1.55,
                 max_rpm: 15000,
                 ers_joules: DEMO_ERS_CAPACITY * (0.58 + phase * 0.27),
@@ -283,6 +289,9 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
             c[54..58].copy_from_slice(&s.deployed_joules.to_le_bytes());
             c[58] = s.paused as u8;
             c[28] = s.fia_flag.unwrap_or(255);
+            for (index, compound) in s.visual_compounds.into_iter().enumerate() {
+                b[HEADER_SIZE + 59 * index + 26] = compound;
+            }
         }
         Packet::Damage(_, d) => {
             for (i, v) in d.wear.iter().enumerate() {

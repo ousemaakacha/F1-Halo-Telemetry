@@ -96,6 +96,16 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn visual_tyre_compound(&self, index: u8, now: Instant) -> Option<u8> {
+        self.status
+            .as_ref()
+            .filter(|status| self.driving(now) && status.fresh(now, FAST_TTL))?
+            .value
+            .visual_compounds
+            .get(usize::from(index))
+            .copied()
+    }
+
     pub fn participant_name(&self, index: u8, now: Instant) -> Option<&str> {
         self.driver_names
             .as_ref()

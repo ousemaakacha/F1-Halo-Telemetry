@@ -163,7 +163,9 @@ La scritta **RPM** mostra i giri attuali per intero, per esempio **RPM 10000**.
 Ogni lineetta ACTIVE AERO ha un bordo verde quando è attivo, rosso quando è inattivo.
 La riga sinistra superiore mostra il pilota immediatamente davanti, quella
 inferiore il pilota dietro: posizione, nome e distacco in secondi, per esempio
-**1.234s**, con una colonna dedicata ai tempi. Selezionare il modello e premere
+**1.234s**, con una colonna dedicata ai tempi. Tra nome e distacco, un simbolo
+a doppio anello mostra la gomma montata da ciascun avversario.
+Selezionare il modello e premere
 **Apply and save**, poi regolare posizione e scala in Edit Mode sulla propria
 visuale. [Anteprima e dettagli f1 tv](docs/REPLICA.md).
 

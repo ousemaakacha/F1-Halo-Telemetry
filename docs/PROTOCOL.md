@@ -53,16 +53,25 @@ Per gli ID letti vengono verificate versione 1 e lunghezza esatta, compresi i
 campi finali non visualizzati. Le altre categorie non modificano lo snapshot.
 Gli array contengono 24 slot. Il parser legge la vettura locale e, in Lap Data,
 posizione e intervallo della vettura subito dietro in classifica.
+Per le gomme di f1 tv acquisisce anche `visualTyreCompound` da tutti i 24
+record di Car Status, associandolo all'indice dell'auto davanti o dietro.
 
 Offset relativi all'inizio del record vettura:
 
 | Pacchetto | Campi usati e offset |
 | --- | --- |
 | Car Telemetry | speed u16=0; throttle f32=2; brake f32=10; gear i8=15; RPM u16=16; rev%=19; LED u16=20; surface[4] u8=30; inner[4] u8=34 |
-| Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; ERS energy f32=37; deployment u8=41; harvested MGU-K f32=42; harvest limit f32=50; deployed energy f32=54; networkPaused u8=58 |
+| Car Status | fuelRemainingLaps f32=13 (margine MFD con segno); maxRPM u16=17; visualTyreCompound u8=26 (tutti gli slot); ERS energy f32=37; deployment u8=41; harvested MGU-K f32=42; harvest limit f32=50; deployed energy f32=54; networkPaused u8=58 |
 | Car Damage | wear[4] f32=0,4,8,12 |
 | Car Telemetry 2 | aeroMode u8=0; aeroAvailable u8=1; aeroDistance u16=2; overtakeAvailable u8=4; overtakeActive u8=5; overtakeDistance u16=6; regulations2026 u8=8 |
 | Lap Data | deltaToCarInFrontMSPart u16=14; deltaToCarInFrontMinutesPart u8=16; carPosition u8=32; currentLapNum u8=33; driverStatus u8=44; resultStatus u8=45 |
+
+Le mescole visuali F1 usano 16=Soft, 17=Medium, 18=Hard, 8=Wet e
+7=Intermediate. La lettura riguarda la gomma montata e non usa il composto
+assoluto C0–C6 a offset 25. Il dato segue la validità di Car Status (500 ms),
+la pausa e gli azzeramenti di sessione/sorgente; i codici non riconosciuti
+non vengono convertiti in una mescola presunta. I nomi e gli indici degli
+avversari mantengono le proprie regole di validità.
 
 Per il distacco posteriore si cerca nello stesso pacchetto la vettura attiva
 (`resultStatus == 2`) con `carPosition == posizioneLocale + 1`. L'intervallo è

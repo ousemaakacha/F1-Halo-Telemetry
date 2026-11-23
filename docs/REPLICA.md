@@ -11,6 +11,8 @@ usano lo stesso raggio di Shift, estremi speculari, spessore e cornici uguali.
 I due riquadri laterali hanno altezza di 80 unità, ridotta del 20% rispetto
 alla versione precedente. Margini e righe sono riallineati senza ridurre
 dimensione o proporzioni dei testi.
+Entrambi i riquadri sono rialzati di 20 unità insieme al proprio contenuto,
+con uno spostamento identico sui due lati e spazio libero sotto l'arco bianco.
 Testi, divisori e barra RPM seguono la medesima curvatura. La classifica ha
 due righe equidistanti; nomi lunghi terminano con `...` mantenendo la dimensione
 dei caratteri. A destra, GEARS, numeri delle marce, barra e didascalia RPM hanno
@@ -38,9 +40,17 @@ globale è quello predefinito; un colore personalizzato viene rispettato.
 
 Il pannello sinistro mostra l'auto immediatamente davanti nella riga superiore
 e quella immediatamente dietro nella riga inferiore. Ciascuna riga contiene
-posizione in classifica, nome e distacco dalla propria vettura in una colonna
+posizione in classifica, nome, gomma montata e distacco dalla propria vettura in una colonna
 dedicata, per esempio **1.234s**. I nomi provengono da Participants, mentre
 posizioni, identità degli avversari e intervalli provengono da Lap Data.
+La gomma usa il modello **B**, a doppio anello: **S rossa**, **M gialla**,
+**H bianca**, **W blu** e **I verde**. La lettera è centrata sul simbolo e
+segue l'inclinazione del pannello. I nomi sono spostati a sinistra, senza
+ridurre i caratteri, e rimangono distanziati dall'icona prima del divisore
+del gap. I nomi lunghi conservano la dimensione e terminano con `...`.
+La mescola visuale proviene da Car Status per l'indice dell'avversario:
+si aggiorna al cambio gomme e al cambio dell'auto davanti o dietro.
+Dati assenti, scaduti o codici non supportati mostrano un anello grigio con `?`.
 I nomi restano validi dieci secondi
 fra gli invii Participants, documentati ogni cinque secondi. Posizioni,
 pedali e stati rapidi scadono dopo 500 ms. Nomi vuoti, UTF-8 non valido,
@@ -52,7 +62,8 @@ la colonna. Un distacco valido di zero viene mostrato come **0.000s**.
 
 La colonna dei distacchi occupa lo spazio del precedente riquadro TURN.
 ACTIVE AERO mostra due tratti orizzontali in Straight Mode e inclinati in
-Corner Mode. Un bordo aderente circonda singolarmente ciascun tratto, estremità
+Corner Mode. I tratti sono allungati del 20% mantenendo centro e spessore interno.
+Un bordo colorato di 2 unità logiche circonda singolarmente ciascun tratto, estremità
 comprese: verde quando l'aerodinamica è attiva, rosso quando è inattiva.
 La sola disponibilità non rende verde il
 bordo; dati assenti, scaduti o non applicabili mantengono il bordo spento.

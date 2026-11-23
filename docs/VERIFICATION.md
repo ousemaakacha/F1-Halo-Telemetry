@@ -1,5 +1,69 @@
 # Local verification
 
+## f1 tv: gomme degli avversari con simbolo B — 23 novembre 2026
+
+Aggiunto il simbolo a doppio anello tra nome e divisore del distacco, per
+l'auto immediatamente davanti e quella dietro. Colori e iniziali: S rosso,
+M giallo, H bianco, W blu e I verde. Nomi spostati a sinistra e abbreviati
+con puntini quando necessario, mantenendo dimensione e proporzioni.
+
+Car Status conserva le mescole visuali dei 24 slot; lo snapshot le legge
+per identità dell'avversario con scadenza a 500 ms. Verificati offset visuale
+distinto dal composto assoluto, indice locale 0/23, sorpasso, cambio gomme,
+pausa, dato scaduto, cambio sessione e ricezione UDP reale su loopback.
+Il modello usa un simbolo neutro `?` quando il dato non è disponibile.
+La modalità Demo e il suo codificatore UDP includono le mescole.
+
+Superati **126 test**, build Release e rustfmt sui file modificati.
+Verificati **36 scenari Direct2D**: tutte le mescole, dati assenti, nomi lunghi
+e scale 1000×300 e 2000×600. Il controllo dei pixel conferma almeno 10 unità
+tra nome e gomma e uno scarto del centro delle cinque iniziali inferiore
+a 0,25 unità logiche nella resa 2000×600. Modern e Shift non presentano
+pixel modificati. [Anteprima](../artifacts/f1-tv-tyres-b-preview.png) e
+[nome lungo](../artifacts/f1-tv-tyres-b-long-name.png).
+Nessuna nuova prova in gara.
+
+## f1 tv: bordi Active Aero più spessi — 22 novembre 2026
+
+Aumentato lo spessore dei contorni rossi e verdi da 1,2 a 2 unità logiche.
+Il bordo segue ciascuna lineetta, comprese le estremità arrotondate.
+Conservati centro, lunghezza, inclinazione e spessore della parte chiara interna.
+
+Superati build Release, rustfmt sul file modificato e 30 scenari Direct2D.
+Verificati entrambi i colori, i contorni aderenti e i margini alle scale
+1000×300 e 2000×600. Modern e Shift non presentano pixel modificati.
+[Aero attivo](../artifacts/f1-tv-thicker-aero-preview.png) e
+[Aero inattivo](../artifacts/f1-tv-thicker-aero-off.png).
+Nessuna nuova prova in gara.
+
+## f1 tv: lineette Active Aero più lunghe — 22 novembre 2026
+
+Allungate le due lineette del 20% in entrambi gli stati, distribuendo
+l'estensione sulle due estremità. Centro, inclinazione, spessore e contorno
+verde/rosso rimangono invariati.
+
+Superati build Release, rustfmt sul file modificato e 30 scenari Direct2D.
+Verificati i due contorni aderenti, i margini e le scale 1000×300 e 2000×600.
+Modern e Shift non presentano pixel modificati.
+[Aero attivo](../artifacts/f1-tv-longer-aero-preview.png) e
+[Aero inattivo](../artifacts/f1-tv-longer-aero-off.png).
+Nessuna nuova prova in gara.
+
+## f1 tv: riquadri laterali rialzati e allineati — 22 novembre 2026
+
+Traslati entrambi i riquadri di 20 unità verso l'alto, pari a 40 pixel
+nell'anteprima 2000×600. Lo stesso spostamento comprende cornici, divisori,
+classifica, distacchi, ACTIVE AERO, marce e RPM. Dimensioni, curvatura,
+simmetria e proporzioni dei testi rimangono invariate.
+
+Superati la build Release, i quattro test del modello e il controllo rustfmt sul file
+modificato. Il test dell'arco ora considera lo spostamento effettivo
+e verifica uno spazio libero superiore a 8 unità. Verificati 30 scenari
+Direct2D, con controlli sui margini a 1000×300 e 2000×600. Modern e Shift
+non presentano pixel modificati. [Anteprima](../artifacts/f1-tv-raised-preview.png)
+e [Aero inattivo](../artifacts/f1-tv-raised-aero-off.png).
+Nessuna nuova prova in gara.
+
 ## f1 tv: riquadri laterali più bassi — 22 novembre 2026
 
 Ridotta l'altezza radiale dei due riquadri da 100 a 80 unità (-20%), mantenendo

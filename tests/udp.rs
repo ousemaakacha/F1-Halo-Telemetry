@@ -37,7 +37,7 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
         for packet in demo::sample(2.0, frame).into_iter().filter(|packet| {
             matches!(
                 packet,
-                Packet::Telemetry(..) | Packet::History(..) | Packet::Lap(..)
+                Packet::Telemetry(..) | Packet::Status(..) | Packet::History(..) | Packet::Lap(..)
             )
         }) {
             let length = demo::encode(packet, &mut buffer);
@@ -50,6 +50,8 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
         let snapshot = *receiver.shared.read().unwrap();
         if snapshot.lap_delta_ms(Instant::now()) == Some(230)
             && snapshot.gap_behind_ms(Instant::now()) == Some(2_536)
+            && snapshot.visual_tyre_compound(0, Instant::now()) == Some(17)
+            && snapshot.visual_tyre_compound(1, Instant::now()) == Some(16)
         {
             received = true;
             break;
@@ -76,6 +78,7 @@ fn actual_udp_receives_latest_snapshot_and_switches_sources() {
         assert!(cleared.lap_history.is_none());
         assert!(cleared.gap_behind.is_none());
         assert!(cleared.telemetry.is_none());
+        assert_eq!(cleared.visual_tyre_compound(0, Instant::now()), None);
         assert_eq!(cleared.source_epoch, 2);
     }
     let start = Instant::now();

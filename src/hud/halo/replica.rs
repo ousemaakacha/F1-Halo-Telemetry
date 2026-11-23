@@ -12,9 +12,13 @@ const DIAL: (f32, f32) = (CENTER_X, 104.0);
 const DIAL_REFERENCE: Point = (404.0, 150.0);
 const ORIGIN: (f32, f32) = (CONTENT_PADDING, 0.0);
 const WINGS: [(f32, f32); 2] = [(-31.5, -13.0), (13.0, 31.5)];
+const WING_LIFT: f32 = 20.0;
 const WING_TOP: f32 = -66.0;
 const WING_BOTTOM: f32 = 14.0;
 const NAME_ROWS: [f32; 2] = [WING_TOP + 20.0, WING_BOTTOM - 20.0];
+const NAME_ANGLES: (f32, f32) = (-28.1, -21.6);
+const TYRE_ANGLE: f32 = -20.0;
+const TYRE_DIAMETER: f32 = 18.0;
 const SPLIT_ROW: f32 = (WING_TOP + WING_BOTTOM) / 2.0;
 const META_ROW: f32 = WING_TOP + 13.0;
 const GEAR_ROW: f32 = WING_TOP + 34.0;
@@ -61,6 +65,17 @@ fn aero_border(aero: Option<Aero>) -> [u8; 3] {
         Some(a) if a.straight => AERO_GREEN,
         Some(_) => AERO_RED,
         None => OFF,
+    }
+}
+
+fn tyre_style(compound: Option<u8>) -> (&'static str, [u8; 3]) {
+    match compound {
+        Some(16) => ("S", [255, 72, 79]),
+        Some(17) => ("M", [255, 212, 66]),
+        Some(18) => ("H", [241, 244, 245]),
+        Some(8) => ("W", [41, 150, 255]),
+        Some(7) => ("I", [44, 218, 120]),
+        _ => ("?", OFF),
     }
 }
 
@@ -291,7 +306,7 @@ impl Replica {
             inner_ring: ring(factory, 76.0)?,
             mesh: dot_mesh(factory)?,
             pedals: [Pedal::new(factory, false)?, Pedal::new(factory, true)?],
-            names: NAME_ROWS.map(|offset| text_curve(-28.1, -18.9, offset)),
+            names: NAME_ROWS.map(|offset| text_curve(NAME_ANGLES.0, NAME_ANGLES.1, offset)),
             positions: NAME_ROWS.map(|offset| text_curve(-30.9, -28.9, offset)),
             gaps: NAME_ROWS.map(|offset| text_curve(-18.0, -13.5, offset)),
             aero: [META_ROW, META_ROW + 15.0].map(|offset| text_curve(13.7, 18.0, offset)),
@@ -327,14 +342,16 @@ impl Replica {
 
             p.stroke_geometry(&self.brow, [15, 25, 28], 3.0, 0.2);
             p.stroke_geometry(&self.brow, [220, 232, 231], 1.2, 0.85);
-            for panel in [&self.left, &self.right] {
-                p.material_geometry(panel, opacity * 0.72);
-                p.stroke_geometry(panel, accent, 1.0, 0.85);
-            }
-            for divider in &self.dividers {
-                p.stroke_geometry(divider, accent, 0.8, 0.5);
-            }
-            self.draw_standings(p, snapshot, now);
+            p.translated((0.0, -WING_LIFT), |p| {
+                for panel in [&self.left, &self.right] {
+                    p.material_geometry(panel, opacity * 0.72);
+                    p.stroke_geometry(panel, accent, 1.0, 0.85);
+                }
+                for divider in &self.dividers {
+                    p.stroke_geometry(divider, accent, 0.8, 0.5);
+                }
+                self.draw_standings(p, snapshot, now);
+            });
 
             p.circle(DIAL.0, DIAL.1, 79.5, GLASS, opacity * 0.9);
             p.stroke_geometry(&self.mesh, BORDER, 0.55, opacity * 0.26);
@@ -363,7 +380,9 @@ impl Replica {
                 budgets[0],
             );
             self.pedals[1].draw(p, tel.map(|t| t.throttle), throttle, opacity, budgets[1]);
-            self.draw_gears(p, tel, status, aero, accent, throttle);
+            p.translated((0.0, -WING_LIFT), |p| {
+                self.draw_gears(p, tel, status, aero, accent, throttle);
+            });
 
             let connection = snapshot.connection(now);
             if connection != Connection::Live {
@@ -413,6 +432,24 @@ impl Replica {
                 HudStraight,
                 if name == "--" { MUTED } else { WHITE },
             );
+            let compound = opponent
+                .and_then(|opponent| snapshot.visual_tyre_compound(opponent.car_index, now));
+            let (letter, colour) = tyre_style(compound);
+            let (x, y) = wing_point(TYRE_ANGLE, NAME_ROWS[i]);
+            for (radius, width) in [(0.465, 0.055), (0.36, 0.06)] {
+                let radius = radius * TYRE_DIAMETER;
+                p.rounded_outline(
+                    rect(x - radius, y - radius, radius * 2.0, radius * 2.0),
+                    radius,
+                    colour,
+                    width * TYRE_DIAMETER,
+                    1.0,
+                );
+            }
+            p.rotated((x, y), TYRE_ANGLE, |p| {
+                // Centre the capital's visible ink rather than its font line box.
+                p.text(letter, rect(x - 9.0, y - 9.5, 18.0, 18.0), HudLabel, WHITE);
+            });
             if let Some(gap) = opponent {
                 // Long intervals keep a readable size in the same fixed-width column.
                 let decimals = if gap.millis < 100_000 {
@@ -558,15 +595,21 @@ impl Replica {
             };
             let length = (b.0 - a.0).hypot(b.1 - a.1);
             let angle = (b.1 - a.1).atan2(b.0 - a.0).to_degrees();
+            let extension = length * 0.1;
             p.rotated(a, angle, |p| {
                 p.rounded(
-                    rect(a.0 - 1.2, a.1 - 2.4, length + 2.4, 4.8),
-                    2.4,
+                    rect(
+                        a.0 - extension - 2.0,
+                        a.1 - 3.2,
+                        length + 2.0 * extension + 4.0,
+                        6.4,
+                    ),
+                    3.2,
                     aero_border(aero),
                     1.0,
                 );
                 p.rounded(
-                    rect(a.0, a.1 - 1.2, length, 2.4),
+                    rect(a.0 - extension, a.1 - 1.2, length + 2.0 * extension, 2.4),
                     1.2,
                     if straight.is_some() {
                         [169, 237, 237]
@@ -756,7 +799,7 @@ mod tests {
                 assert!((y - left_y).abs() < 0.001);
                 for x in [x, left_x] {
                     assert!((0.0..WIDTH).contains(&(x + ORIGIN.0)));
-                    assert!((0.0..HEIGHT).contains(&(y + ORIGIN.1)));
+                    assert!((0.0..HEIGHT).contains(&(y + ORIGIN.1 - WING_LIFT)));
                 }
                 let radius = (x - DIAL.0).hypot(y - (153.0 + modern::RADIUS));
                 assert!((radius - (modern::RADIUS - offset)).abs() < 0.001);
@@ -778,11 +821,12 @@ mod tests {
             let b = classic::curve_point(&right, 1.0 - t);
             assert!((a.0 + b.0 - 2.0 * DIAL.0).abs() < 0.001);
             assert!((a.1 - b.1).abs() < 0.001);
+            let wing_y = a.1 + WING_LIFT;
             let angle = (a.0 - DIAL.0)
-                .atan2(153.0 + modern::RADIUS - a.1)
+                .atan2(153.0 + modern::RADIUS - wing_y)
                 .to_degrees();
             if (WINGS[0].0..WINGS[0].1).contains(&angle) {
-                let radius = (a.0 - DIAL.0).hypot(a.1 - (153.0 + modern::RADIUS));
+                let radius = (a.0 - DIAL.0).hypot(wing_y - (153.0 + modern::RADIUS));
                 assert!(
                     modern::RADIUS - radius < WING_TOP - 8.0,
                     "brow enters the wing"
@@ -805,6 +849,10 @@ mod tests {
         for row in NAME_ROWS {
             assert!(row - WING_TOP - 11.0 >= 9.0 && WING_BOTTOM - row - 11.0 >= 9.0);
             assert!((row - SPLIT_ROW).abs() - 11.0 >= 9.0);
+            let radius = modern::RADIUS - row;
+            let name_gap = radius * (TYRE_ANGLE - NAME_ANGLES.1).to_radians() - TYRE_DIAMETER / 2.0;
+            let divider_gap = radius * (-18.5 - TYRE_ANGLE).to_radians() - TYRE_DIAMETER / 2.0;
+            assert!(name_gap >= 10.0 && divider_gap >= 9.0);
         }
         const {
             assert!(META_ROW - WING_TOP - 5.0 >= 8.0);
@@ -816,5 +864,21 @@ mod tests {
         let gear_step = (modern::RADIUS - GEAR_ROW) * ((LAST_GEAR - FIRST_GEAR) / 8.0).to_radians();
         assert!(gear_step >= 17.5);
         assert!(FIRST_GEAR - 18.5 >= 1.0 && WINGS[1].1 - LAST_GEAR >= 1.0);
+    }
+
+    #[test]
+    fn tyre_icons_use_visual_f1_compounds_and_neutral_unknowns() {
+        for (code, letter, colour) in [
+            (16, "S", [255, 72, 79]),
+            (17, "M", [255, 212, 66]),
+            (18, "H", [241, 244, 245]),
+            (8, "W", [41, 150, 255]),
+            (7, "I", [44, 218, 120]),
+        ] {
+            assert_eq!(tyre_style(Some(code)), (letter, colour));
+        }
+        for unknown in [None, Some(0), Some(9), Some(255)] {
+            assert_eq!(tyre_style(unknown), ("?", OFF));
+        }
     }
 }

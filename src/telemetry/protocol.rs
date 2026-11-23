@@ -107,6 +107,8 @@ pub struct CarTelemetry {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CarStatus {
+    /// Visual compound IDs for every car, indexed by its slot in the status packet.
+    pub visual_compounds: [u8; CAR_COUNT],
     pub fuel_remaining_laps: f32,
     pub max_rpm: u16,
     pub ers_joules: f32,
@@ -312,6 +314,7 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
             Packet::Status(
                 h,
                 CarStatus {
+                    visual_compounds: std::array::from_fn(|car| b[HEADER_SIZE + 59 * car + 26]),
                     fuel_remaining_laps: finite_range(
                         f32_at(c, 13),
                         -f32::MAX,

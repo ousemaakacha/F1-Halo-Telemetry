@@ -715,6 +715,66 @@ fn reads_independent_last_car_fixture_with_exact_2026_offsets() {
 }
 
 #[test]
+fn status_reads_visual_compounds_for_all_cars_independently_of_the_player() {
+    let expected = std::array::from_fn(|index| [16, 17, 18, 8, 7, 255][index % 6]);
+    for player in [0, 23] {
+        let mut bytes = wire(7, player, 600);
+        for (index, compound) in expected.into_iter().enumerate() {
+            bytes[29 + 59 * index + 25] = 16;
+            bytes[29 + 59 * index + 26] = compound;
+        }
+        let Packet::Status(_, status) = parse(&bytes).unwrap() else {
+            panic!()
+        };
+        assert_eq!(status.visual_compounds, expected);
+    }
+    let status = demo::sample(14.0, 840)[1];
+    let mut buffer = [0; protocol::STATUS_SIZE];
+    let length = demo::encode(status, &mut buffer);
+    assert_eq!(parse(&buffer[..length]).unwrap(), status);
+}
+
+#[test]
+fn neighbour_tyres_follow_car_identity_pit_changes_freshness_and_session_reset() {
+    let start = Instant::now();
+    let mut state = TelemetryState::default();
+    let now = race_sample(&mut state, start, 0, Some((0, 1234)), Some((4, 832)));
+    let mut bytes = wire(7, 23, 600);
+    for (car, compound) in [(0, 16), (4, 17), (7, 8), (23, 18)] {
+        bytes[29 + 59 * car + 26] = compound;
+    }
+    assert!(state.apply(parse(&bytes).unwrap(), now));
+    let tyres = |snapshot: &Snapshot, at| {
+        snapshot.race_opponents(at).map(|opponent| {
+            opponent.and_then(|opponent| snapshot.visual_tyre_compound(opponent.car_index, at))
+        })
+    };
+    assert_eq!(tyres(&state.snapshot, now), [Some(16), Some(17)]);
+    assert_eq!(state.snapshot.visual_tyre_compound(24, now), None);
+    assert_eq!(state.snapshot.visual_tyre_compound(255, now), None);
+    let now = race_sample(&mut state, start, 1, Some((7, 500)), Some((4, 250)));
+    assert_eq!(tyres(&state.snapshot, now), [Some(8), Some(17)]);
+    let now = race_sample(&mut state, start, 2, Some((7, 500)), Some((4, 250)));
+    let mut changed = wire(7, 23, 612);
+    changed[29 + 59 * 7 + 26] = 7;
+    changed[29 + 59 * 4 + 26] = 18;
+    assert!(state.apply(parse(&changed).unwrap(), now));
+    assert_eq!(tyres(&state.snapshot, now), [Some(7), Some(18)]);
+    let mut paused = state.snapshot;
+    paused.session.as_mut().unwrap().value.paused = true;
+    assert_eq!(paused.visual_tyre_compound(7, now), None);
+    let stale = now + FAST_TTL + Duration::from_millis(1);
+    assert!(state.apply(parse(&wire(6, 23, 660)).unwrap(), stale));
+    assert!(state.snapshot.driving(stale));
+    assert_eq!(state.snapshot.visual_tyre_compound(7, stale), None);
+    let mut new_session = wire(6, 23, 1);
+    new_session[7..15].copy_from_slice(&43u64.to_le_bytes());
+    assert!(state.apply(parse(&new_session).unwrap(), stale));
+    assert!(state.snapshot.status.is_none());
+    assert_eq!(state.snapshot.visual_tyre_compound(7, stale), None);
+}
+
+#[test]
 fn status_offsets_include_new_harvest_limit() {
     let mut b = wire(7, 23, 99);
     let o = 29 + 59 * 23;
