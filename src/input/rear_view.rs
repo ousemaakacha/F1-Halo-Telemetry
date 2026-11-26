@@ -855,7 +855,7 @@ mod tests {
             ] {
                 hidden = held(hidden, true, Some(axes), true, true);
                 assert_eq!(hidden, expected);
-                let layouts = settings.effective_layouts(true, hidden);
+                let layouts = settings.effective_layouts(true, hidden, false);
                 assert_eq!(layouts[0].visible, visible && !expected);
                 assert_eq!(layouts[1].visible, settings.tyres.visible);
             }

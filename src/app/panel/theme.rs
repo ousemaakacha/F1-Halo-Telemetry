@@ -51,7 +51,7 @@ impl Page {
 
     fn description(self) -> &'static str {
         match self {
-            Self::Layout => "Background 0–100%: fade the panels while text stays sharp.",
+            Self::Layout => "Background: 0% transparent, 100% opaque. Text stays sharp.",
             Self::Tyres => "Set the temperature window and wear alerts.",
             Self::Colours => "Give every telemetry channel its own colour.",
             Self::Connection => "Connect to the UDP telemetry sent by F1 25.",

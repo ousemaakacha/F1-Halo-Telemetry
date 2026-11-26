@@ -1,5 +1,193 @@
 # Local verification
 
+## Gara: sigle piloti nel pannello sinistro — 25 novembre 2026
+
+Le due righe degli avversari mostrano le sigle al posto dei nomi estesi:
+per esempio NOR, LEC e VER. La conversione gestisce cognomi, nomi completi,
+iniziali puntate, accenti latini e le eccezioni MSC/RSC, DEV e ZHO.
+Per nomi personalizzati usa fino a tre caratteri alfanumerici dell'ultima
+parola; nomi assenti continuano a mostrare `--`. La conversione usa un buffer
+sullo stack e non aggiunge allocazioni nel rendering.
+
+Le sigle sono state confrontate con le classifiche ufficiali
+[F1 2022](https://www.formula1.com/en/results/2022/drivers) e
+[F1 2005](https://www.formula1.com/en/results/2005/drivers).
+Superati **144 test**, inclusi 24 casi di conversione nella nuova regressione.
+Resta escluso il test grafico preesistente del pannello documentato sotto.
+Passano rustfmt sul file Rust modificato, Clippy con
+`-D warnings -A dead-code` e build Release. La build include anche le precedenti
+correzioni del rewind e della visibilità gomme in TT. Nessuna nuova prova nel gioco.
+
+## Time Trial: solo Halo, mini HUD pneumatici nascosto — 25 novembre 2026
+
+La visibilità del mini HUD pneumatici segue la stessa modalità TT/Race del
+pannello Halo, compresa la selezione manuale. Entrando in TT, la finestra delle
+gomme viene nascosta e il suo rendering si arresta; tornando a Race, riprende
+la visibilità salvata. Il filtro non modifica le impostazioni dei singoli HUD.
+Il cambio modalità viene rilevato anche durante la guida, senza richiedere
+una pausa o un cambio dello stato di connessione. Applicazione impostazioni,
+cambio sorgente e ripristino dopo un errore usano la stessa regola.
+
+Superati **143 test**, inclusa una nuova regressione sul passaggio TT/Race
+con preferenze individuali, interruttore globale e filtri della visuale.
+Resta escluso il solo test grafico del pannello già riprodotto sulla versione
+precedente, documentato sotto. Passano rustfmt sui quattro file Rust modificati,
+Clippy con `-D warnings -A dead-code` e build Release. La nuova build comprende
+anche la correzione del delta dopo il rewind. Nessuna nuova prova nel gioco.
+
+## Time Trial: delta dopo il rewind — 25 novembre 2026
+
+Il flashback conserva le tracce valide già completate e il miglior tempo noto.
+La traccia del giro interrotto viene scartata; il delta riprende dai nuovi
+campioni confrontandoli con il riferimento conservato. I successivi giri validi
+possono ancora migliorarlo. L'indice interno dei giri viene mantenuto durante
+le interruzioni, così uno storico tardivo non elimina un nuovo migliore quando
+il numero giro UDP del TT resta fisso.
+
+Riprodotti prima della correzione sia la perdita del riferimento sia lo scarto
+errato del nuovo migliore. Passano tutti i **14 test TT**, inclusi tre nuovi
+casi su pacchetti binari: conservazione e successivo miglioramento del
+riferimento, scarto della traccia interrotta e recupero senza riferimento
+precedente, numero giro fisso con storico tardivo.
+
+Superati **142 test** con il solo test
+`app::panel::tests::switching_settings_pages_preserves_unsaved_values` escluso:
+fallisce con `Control 144 exposed native paint below its skin: ffffffff`
+anche su una copia isolata del codice precedente alla correzione.
+Passano rustfmt sui tre file Rust modificati, Clippy con
+`-D warnings -A dead-code` e build Release. L'esclusione `dead-code` riguarda
+il codice Classic inutilizzato già documentato. Eseguibile corretto consegnato
+separatamente: Windows blocca la sostituzione della copia in `downloads`
+usata dall'istanza aperta. Nessuna nuova prova nel gioco.
+
+## Halo: sfondo regolabile fino al 100% opaco — 24 novembre 2026
+
+Il campo **Background %** mantiene l'intervallo 0–100% e ora raggiunge uno
+sfondo completamente opaco su Modern, Shift e f1 tv. Rimossi i moltiplicatori
+fissi sui fondi f1 tv e l'alpha residuo dei gradienti condivisi. Il pannello
+esplicita i due estremi; 0 e 100 producono valori esatti anche quando la
+percentuale precedente era arrotondata. I valori intermedi conservano la
+precisione esistente. Testi e indicatori mantengono la propria opacità.
+
+Superati **140 test**, build Release, rustfmt sui quattro file Rust modificati
+e Clippy con `-D warnings -A dead-code`. Il controllo rustfmt globale segnala
+soltanto due formattazioni preesistenti in `src/settings/mod.rs`; l'esclusione
+Clippy riguarda il codice Classic inutilizzato già presente.
+
+Verificati **36 render Direct2D**: tre modelli, scale 1000×300 e 2000×600,
+fondi allo 0/50/100%, sopra bianco e nero. Al 100% i pixel interni dei pannelli
+coincidono sui due colori sottostanti, senza trasparenza residua.
+[Anteprima f1 tv su bianco](../artifacts/f1-tv-background-opaque.png).
+Demo Release di sei secondi al 100%, con una ricreazione del dispositivo e
+zero errori di presentazione: [report](../artifacts/halo-background-smoke.json).
+Nessuna nuova prova nel gioco.
+
+## f1 tv: ala sinistra gara / Time Trial — 24 novembre 2026
+
+Superati **139 test**, inclusi 11 casi TT su pacchetti binari e il controllo
+della selezione manuale. Coperti riferimento fisso, giro migliore, giro invalido,
+invalidazione finale persa e recuperata dallo storico, settori, minuti, tracce
+parziali/interrotte/in retromarcia, numero giro TT invariato, duplicati, riordini,
+scadenza, flashback e cambi sessione. Build Release e rustfmt sui file modificati
+completati. Clippy passa con `-D warnings -A dead-code`; il comando senza
+esclusione resta bloccato dal codice Classic inutilizzato preesistente.
+
+Confronto Direct2D a 1000×300 e 2000×600 con i sorgenti acquisiti prima della
+modifica: Modern e Shift coincidono pixel per pixel; f1 tv gara conserva il
+rendering, con al massimo due pixel di differenza da arrotondamento antialias.
+La funzione originale `draw_standings`, quadrante e pannello destro sono
+identici. Nei sei scenari TT (vantaggio, ritardo/giro invalido, nessun riferimento,
+traccia mancante, dati mancanti, valori massimi) i cambiamenti riguardano l'ala
+sinistra; nessun cambiamento visibile altrove.
+[Anteprima TT sintetica](../artifacts/f1-tv-time-trial-preview.png).
+
+Nell'app Release, con UDP sintetico su porta di test, osservati selettore
+Automatic/Race/Time Trial, passaggio manuale da TT a Race, persistenza durante
+la sessione e ripristino automatico di TT dopo cambio UID. Il menu mantiene
+la spunta sull'opzione selezionata. Il collaudo è terminato automaticamente
+dopo 180 s; non è stata eseguita una nuova prova nel gioco.
+
+## f1 tv: dettagli più piccoli e simboli gomme più leggibili — 24 novembre 2026
+
+Ridotti del 25% soltanto RCH/DPL, percentuale batteria e caratteri della riga
+marce, mantenendone i centri. Aumentato il diametro dei simboli mescola da 18
+a 24 unità (+33%); ricavato spazio tra nome e distacco conservando i margini
+minimi di 10 unità dal nome e 9 dal divisore.
+
+Superati **127 test** e rustfmt. Verificati i render Demo, valori massimi,
+dati mancanti e nome lungo; Modern, Shift e mini HUD pneumatici coincidono
+pixel per pixel con le anteprime precedenti.
+[Anteprima aggiornata](../artifacts/f1-tv-font-details-preview.png).
+Nessuna nuova prova in gara.
+
+## Font F1 Turbo negli HUD — 23 novembre 2026
+
+Integrato il file originale Formula1 Display-Wide in una collezione DirectWrite
+privata incorporata nell'eseguibile. Le scritte e i numeri di Modern, Shift,
+f1 tv e pneumatici usano lo stesso carattere. Le colonne strette adattano la
+larghezza conservando l'altezza dei glifi; i nomi lunghi usano un formato
+dedicato e i puntini di sospensione.
+
+Superati build Release, **127 test** e rustfmt sul renderer. Clippy completato
+con i soli avvisi preesistenti sul modello Classic inutilizzato.
+Verificati **16 render Direct2D**:
+i tre Halo e il mini HUD pneumatici con Demo, valori massimi, dati mancanti e
+nome multiplayer lungo. Controllati anche 100% di usura, 255/255 giri,
+velocità/RPM a cinque cifre, glifi alfanumerici e simbolo °. Il controllo nativo
+conferma la famiglia corretta, senza sostituzione con un font di sistema né
+pesi sintetici, dopo tre ricreazioni delle risorse grafiche.
+[Anteprima f1 tv](../artifacts/f1-turbo-f1-tv-preview.png) e
+[pneumatici](../artifacts/f1-turbo-tyres-preview.png).
+Nessuna nuova prova in gara.
+
+## f1 tv: contatore giri più piccolo — 23 novembre 2026
+
+Ridotti insieme testo LAPS e numeri al rapporto 0,6 (-40%), conservando
+centro, proporzioni e disposizione curva. Anche il segnaposto segue la stessa scala.
+Build Release e rustfmt superati. Controllati 55 scenari Direct2D, con
+leggibilità e separazione dal quadrante a 1000×300 e 2000×600, inclusi
+7/18, giro finale, tre cifre e dati mancanti.
+[Anteprima compatta](../artifacts/f1-tv-laps-smaller-preview.png).
+Nessuna nuova prova in gara; i test sui dati non sono stati ripetuti per questa modifica grafica.
+
+## f1 tv: contatore giri sull'arco superiore — 23 novembre 2026
+
+Aggiunto **LAPS giro/totale** nel punto indicato, sotto l'arco bianco a sinistra
+del quadrante. Il testo bianco segue la curva e mantiene spazio libero dal
+cerchio centrale. I valori arrivano da currentLapNum locale e totalLaps di
+Session; dati assenti, a zero o scaduti mostrano **LAPS --/--** attenuato.
+
+Superati **127 test**, build Release e rustfmt sui file modificati. Verificati
+lettura del totale a offset 3 del corpo Session, indici locali 0 e 23,
+avanzamento dal giro 7 all'8, scadenze indipendenti dei due dati, totale
+sconosciuto, reset di sessione e codifica/decodifica Demo.
+Le prove native comprendono **55 scenari Direct2D**, con 7/18, giro finale,
+valori a tre cifre, dato assente e tutti gli avvisi già presenti. Controllate
+le scale 1000×300 e 2000×600 e la separazione dal quadrante; Modern e Shift
+non presentano pixel modificati nei controlli di regressione.
+[Anteprima 7/18](../artifacts/f1-tv-laps-preview.png) e
+[valori a tre cifre](../artifacts/f1-tv-laps-maximum.png).
+Nessuna nuova prova in gara.
+
+## f1 tv: avvisi di gara visibili — 23 novembre 2026
+
+Collegata al modello f1 tv la fascia avvisi già usata da Shift. Viene disegnata
+sotto il quadrante e la scritta Demo, senza sovrapporre batteria, classifica,
+gomme o indicatori. Riutilizza la selezione dell'avviso, i colori e la durata
+esistenti: bandiere verde/blu/gialla, rossa/scacchi, Safety Car/VSC, penalità
+in secondi, drive through, stop go e warning ufficiali.
+
+Superati **126 test**, build Release e rustfmt sul file modificato.
+Verificati **51 scenari Direct2D**, inclusi tutti gli undici tipi di avviso
+e l'assenza della fascia in pausa, da spettatore, dopo la scadenza o quando
+la bandiera termina. Confrontati i pixel alle scale 1000×300 e 2000×600:
+la fascia resta nella zona dedicata sotto il quadrante. Gli altri modelli
+Modern e Shift non presentano pixel modificati nei controlli di regressione.
+[Yellow Flag](../artifacts/f1-tv-yellow-flag.png),
+[Safety Car](../artifacts/f1-tv-safety-car.png) e
+[penalità](../artifacts/f1-tv-penalty.png).
+Nessuna nuova prova in gara; la Demo non genera avvisi fittizi automaticamente.
+
 ## f1 tv: gomme degli avversari con simbolo B — 23 novembre 2026
 
 Aggiunto il simbolo a doppio anello tra nome e divisore del distacco, per

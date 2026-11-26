@@ -1,6 +1,7 @@
 use super::{
     Aero, CarGap, CarStatus, CarTelemetry, Damage, ErsCapacity, GapReading, Header, LapHistory,
-    Packet, Participants, RaceAlert, SessionData, alerts::AlertTracker, gaps::GapTracker,
+    Packet, Participants, RaceAlert, SessionData, TimeTrialReading, alerts::AlertTracker,
+    gaps::GapTracker, time_trial::TimeTrialTracker,
 };
 use std::time::{Duration, Instant};
 
@@ -68,6 +69,7 @@ pub struct NetworkCounters {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Snapshot {
     pub source_epoch: u64,
+    pub session_generation: u64,
     pub ers_capacity: Option<ErsCapacity>,
     pub ers_deploy_limit_joules: Option<f32>,
     pub header: Option<Header>,
@@ -79,6 +81,7 @@ pub struct Snapshot {
     pub driver_status: Option<Timed<u8>>,
     pub current_lap: Option<Timed<u8>>,
     pub lap_history: Option<Timed<LapHistory>>,
+    pub time_trial: Option<Timed<TimeTrialReading>>,
     pub gap_behind: Option<Timed<u32>>,
     pub race_gaps: Option<Timed<[Option<GapReading>; 2]>>,
     pub race_alerts: [Option<Timed<RaceAlert>>; 5],
@@ -166,6 +169,18 @@ impl Snapshot {
                 .is_some_and(|s| s.fresh(now, FAST_TTL) && (1..=4).contains(&s.value))
     }
 
+    pub fn lap_counter(&self, now: Instant) -> Option<(u8, u8)> {
+        if !self.on_track(now) {
+            return None;
+        }
+        let current = self
+            .current_lap
+            .filter(|lap| lap.fresh(now, FAST_TTL))?
+            .value;
+        let total = self.session?.value.total_laps;
+        (current > 0 && total > 0).then_some((current, total))
+    }
+
     pub fn lap_delta_ms(&self, now: Instant) -> Option<i64> {
         let history = self.lap_history?;
         if !self.driving(now)
@@ -202,16 +217,23 @@ impl Snapshot {
         })
     }
 
-    pub fn freshness_mask(&self, now: Instant) -> u16 {
-        (self.driving(now) as u16)
-            | ((self.status.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 1)
-            | ((self.damage.is_some_and(|x| x.fresh(now, DAMAGE_TTL)) as u16) << 2)
-            | ((self.aero.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 3)
-            | ((self.connection(now) as u16) << 4)
-            | ((self.lap_history.is_some_and(|x| x.fresh(now, HISTORY_TTL)) as u16) << 8)
-            | ((self.gap_behind.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 9)
-            | ((self.race_gaps.is_some_and(|x| x.fresh(now, FAST_TTL)) as u16) << 10)
-            | (u16::from(self.race_alert(now).map_or(0, |alert| alert.value.code())) << 11)
+    pub fn time_trial(&self, now: Instant) -> Option<TimeTrialReading> {
+        self.time_trial
+            .filter(|reading| self.on_track(now) && reading.fresh(now, FAST_TTL))
+            .map(|reading| reading.value)
+    }
+
+    pub fn freshness_mask(&self, now: Instant) -> u32 {
+        (self.driving(now) as u32)
+            | ((self.status.is_some_and(|x| x.fresh(now, FAST_TTL)) as u32) << 1)
+            | ((self.damage.is_some_and(|x| x.fresh(now, DAMAGE_TTL)) as u32) << 2)
+            | ((self.aero.is_some_and(|x| x.fresh(now, FAST_TTL)) as u32) << 3)
+            | ((self.connection(now) as u32) << 4)
+            | ((self.lap_history.is_some_and(|x| x.fresh(now, HISTORY_TTL)) as u32) << 8)
+            | ((self.gap_behind.is_some_and(|x| x.fresh(now, FAST_TTL)) as u32) << 9)
+            | ((self.race_gaps.is_some_and(|x| x.fresh(now, FAST_TTL)) as u32) << 10)
+            | (u32::from(self.race_alert(now).map_or(0, |alert| alert.value.code())) << 11)
+            | ((self.time_trial(now).is_some() as u32) << 16)
     }
 }
 
@@ -231,9 +253,15 @@ pub struct TelemetryState {
     ended: bool,
     gap_trackers: [GapTracker; 2],
     alert_tracker: AlertTracker,
+    time_trial_tracker: TimeTrialTracker,
 }
 
 impl TelemetryState {
+    pub fn invalidate_time_trial(&mut self) {
+        self.time_trial_tracker.interrupt();
+        self.snapshot.time_trial = None;
+    }
+
     pub fn invalidate_race_alerts(&mut self, packet_id: u8) {
         self.alert_tracker
             .invalidate(packet_id, &mut self.snapshot.race_alerts);
@@ -247,6 +275,8 @@ impl TelemetryState {
     }
 
     fn clear_values(&mut self) {
+        self.time_trial_tracker = TimeTrialTracker::default();
+        self.snapshot.time_trial = None;
         self.invalidate_race_gaps();
         self.snapshot.race_alerts = [None; 5];
         self.alert_tracker = AlertTracker::default();
@@ -295,6 +325,7 @@ impl TelemetryState {
                 self.retired_next = (self.retired_next + 1) % self.retired.len();
             }
             self.clear_values();
+            self.snapshot.session_generation = self.snapshot.session_generation.wrapping_add(1);
             self.boundary = None;
             self.high = None;
             self.ended = false;
@@ -308,6 +339,7 @@ impl TelemetryState {
                 && h.session_time < old.session_time;
             if restarted {
                 self.clear_values();
+                self.snapshot.session_generation = self.snapshot.session_generation.wrapping_add(1);
                 self.high = None;
                 self.boundary = None;
                 self.ended = false;
@@ -316,7 +348,11 @@ impl TelemetryState {
                 && h.session_time + 0.001 < old.session_time
                 && h.frame < old.frame
             {
+                // A rewind interrupts the active trace, not completed reference laps.
+                let time_trial_tracker = std::mem::take(&mut self.time_trial_tracker);
                 self.clear_values();
+                self.time_trial_tracker = time_trial_tracker;
+                self.invalidate_time_trial();
                 self.boundary = Some(h.overall_frame);
                 self.snapshot.counters.flashbacks += 1;
             }
@@ -411,6 +447,23 @@ impl TelemetryState {
                 }
             }
             Packet::Lap(_, lap) if !self.ended => {
+                if let Some(session) = self.snapshot.session.filter(|session| {
+                    alert_lag <= FAST_TTL.as_secs_f32()
+                        && session.fresh(now, DAMAGE_TTL)
+                        && !session.value.paused
+                        && !session.value.spectating
+                }) {
+                    self.snapshot.time_trial = self
+                        .time_trial_tracker
+                        .update(lap, session.value.track_length_m, now)
+                        .map(|value| Timed {
+                            value,
+                            received: now,
+                            overall_frame: h.overall_frame,
+                        });
+                } else {
+                    self.invalidate_time_trial();
+                }
                 self.snapshot.race_position = timed!(lap.position);
                 self.snapshot.preceding_car = lap.race_gaps[0].map(|gap| Timed {
                     value: gap.car_index,
@@ -446,6 +499,7 @@ impl TelemetryState {
                 }
             }
             Packet::History(_, history) if !self.ended => {
+                self.time_trial_tracker.history(history);
                 self.snapshot.lap_history = timed!(history)
             }
             Packet::Participants(_, names) => {
@@ -455,11 +509,15 @@ impl TelemetryState {
             Packet::Event(_, code) => match &code {
                 b"SEND" => {
                     self.clear_values();
+                    self.snapshot.session_generation =
+                        self.snapshot.session_generation.wrapping_add(1);
                     self.sequence[id] = Some(h.overall_frame);
                     self.ended = true;
                 }
                 b"SSTA" => {
                     self.clear_values();
+                    self.snapshot.session_generation =
+                        self.snapshot.session_generation.wrapping_add(1);
                     self.sequence[id] = Some(h.overall_frame);
                     self.ended = false;
                 }

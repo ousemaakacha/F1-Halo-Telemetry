@@ -21,6 +21,14 @@ pannello, nelle icone delle finestre e nell'area di notifica. L'immagine scelta
 è conservata in `assets/app-logo.png`; `assets/app.ico` contiene le risoluzioni
 Windows da 16 a 256 px.
 
+Le scritte e i numeri degli HUD usano **F1 Turbo / Formula1 Display-Wide**, come
+nel riferimento tipografico. Il font è incorporato nell'eseguibile: non serve
+installarlo in Windows. Dimensioni e larghezze si adattano ai riquadri; i nomi
+troppo lunghi mantengono i puntini di sospensione.
+[Anteprima f1 tv](artifacts/f1-turbo-f1-tv-preview.png) e
+[pneumatici](artifacts/f1-turbo-tyres-preview.png).
+Provenienza e diritti del carattere: [font HUD](docs/FONTS.md).
+
 ## Avvio
 
 Aprire `dist/F1-Halo-Telemetry/f1-halo-telemetry.exe`, oppure l'eseguibile in
@@ -72,7 +80,10 @@ combinazione precedente quando possibile.
 La scorciatoia è modificabile nel pannello e disponibile anche nel menu rapido.
 La visibilità durante il gioco è **automatica**: entrambi gli HUD compaiono
 quando la propria vettura è in pista in prove libere, qualifiche (anche Sprint),
-gara o Time Trial. Si nascondono nei menu, in pausa, nel garage, in modalità
+gara. In modalità Time Trial resta visibile solo Halo: il mini HUD pneumatici
+si nasconde automaticamente e torna in modalità Race secondo la visibilità
+salvata. La regola segue anche la scelta manuale del pannello TT/Race.
+Gli HUD si nascondono nei menu, in pausa, nel garage, in modalità
 spettatore, a fine sessione e quando i dati smettono di arrivare. Non serve
 premere la scorciatoia a ogni cambio menu. Il rilevamento non dipende dalla
 velocità: gli HUD restano visibili anche con la vettura ferma in pista.
@@ -106,7 +117,7 @@ Due toggle indipendenti usano lo **stick destro**, senza premere R3:
 
 Halo torna quando riporti lo stick al centro. Disattiva il toggle della direzione
 affetta da drift: quell'asse viene ignorato anche se l'altro toggle resta attivo.
-Il mini HUD pneumatici resta visibile secondo le sue preferenze.
+Il mini HUD pneumatici segue la modalità TT/Race e la propria visibilità salvata.
 Funziona con tutti i modelli Halo durante la guida, con F1 25
 in primo piano; in Demo ed Edit il filtro resta disattivato. Le due caselle
 nel pannello si applicano e si salvano subito, senza **Apply and save**.
@@ -150,8 +161,9 @@ I colori mostrano un campione accanto al valore esadecimale.
 In **Halo & layout**, ciascun overlay ha il campo **Background %**: puoi impostare
 Halo e Tyres separatamente dallo **0% al 100%**. Il controllo modifica soltanto
 il fondo: scritte, numeri, immagine auto e indicatori mantengono la loro opacità.
-Aumenta il valore per ridurre la trasparenza del fondo, oppure usa **0%** per
-eliminarlo. Premi **Apply and save**. Le percentuali vengono ripristinate al
+Aumenta il valore per ridurre la trasparenza del fondo: **100%** lo rende
+completamente opaco, anche nel modello **f1 tv**; **0%** lo elimina.
+Premi **Apply and save**. Le percentuali vengono ripristinate al
 riavvio; i file impostazioni precedenti restano compatibili.
 
 **Halo model** permette di scegliere **modern**, **Shift** oppure **f1 tv**.
@@ -160,11 +172,27 @@ Shift, ali speculari, arco e quadrante centrati: km/h e mph, modalità ERS attua
 OVERTAKE e batteria con percentuale, fasce blu RCH/DPL con residuo per giro, pedali segmentati,
 classifica curva a sinistra e ACTIVE AERO, marce e RPM su righe separate a destra.
 La scritta **RPM** mostra i giri attuali per intero, per esempio **RPM 10000**.
+Il contatore **LAPS giro/totale** segue l'arco a sinistra del quadrante;
+senza dati validi mostra **LAPS --/--**.
 Ogni lineetta ACTIVE AERO ha un bordo verde quando è attivo, rosso quando è inattivo.
 La riga sinistra superiore mostra il pilota immediatamente davanti, quella
-inferiore il pilota dietro: posizione, nome e distacco in secondi, per esempio
-**1.234s**, con una colonna dedicata ai tempi. Tra nome e distacco, un simbolo
+inferiore il pilota dietro: posizione, sigla di tre lettere (per esempio
+**NOR**, **LEC**, **VER**) e distacco in secondi, per esempio **1.234s**,
+con una colonna dedicata ai tempi. Tra sigla e distacco, un simbolo
 a doppio anello mostra la gomma montata da ciascun avversario.
+Solo l'ala sinistra cambia automaticamente in **Time Trial**: delta live rispetto
+al miglior giro valido registrato nella sessione, cronometro del giro, settori
+S1/S2/S3 e stato **VALID / INVALID**. Il riferimento resta fisso durante il giro;
+un giro valido migliore viene usato dal giro successivo. Senza riferimento
+compare **NO VALID REF**; se il miglior tempo è noto ma manca la sua traccia
+completa, compare **NO LAP TRACE** e il delta resta `--`.
+Il rewind conserva i giri validi già registrati e scarta la traccia interrotta
+del giro corrente.
+Nel menu rapido (clic destro su Halo in Edit Mode o sull'icona nell'area di
+notifica), **F1 TV left panel** offre **Automatic (session)**, **Race** e
+**Time Trial**. La scelta manuale vale per la sessione corrente; nuova sessione
+o cambio sorgente ripristinano Automatic. Il pannello piloti gara, quadrante,
+pedali, pannello destro e mini HUD pneumatici mantengono il proprio layout.
 Selezionare il modello e premere
 **Apply and save**, poi regolare posizione e scala in Edit Mode sulla propria
 visuale. [Anteprima e dettagli f1 tv](docs/REPLICA.md).
@@ -200,7 +228,7 @@ scadono. Senza limite RPM valido l'anello segue i LED del gioco e la tacca
 gialla non viene mostrata.
 La marcia e gli indicatori centrali conservano il centro del layout salvato.
 
-Solo Shift aggiunge una fascia di avvisi temporanei sotto il quadrante:
+Shift e f1 tv mostrano una fascia di avvisi temporanei sotto il quadrante:
 bandiere FIA verde/blu/gialla, bandiera rossa/scacchi dagli eventi ufficiali,
 Safety Car/VSC e aumenti di penalità o avvertimenti del gioco. Un avviso dura
 al massimo cinque secondi, senza rinnovarsi a ogni pacchetto; stato terminato,

@@ -300,6 +300,53 @@ fn race_gap_trends_do_not_use_duplicate_frames_frozen_time_or_old_timelines() {
 }
 
 #[test]
+fn lap_counter_pairs_the_local_current_lap_with_a_fresh_session_total() {
+    let now = Instant::now();
+    for player in [0, 23] {
+        let mut state = track_state(now, player, 10, 4);
+        let mut session = wire(1, player, 61);
+        session[29 + 3] = 18;
+        session[29 + 6] = 10;
+        let mut lap = lap_wire(player, 61, 1, None);
+        lap[29 + 57 * player as usize + 33] = 7;
+        lap[29 + 57 * player as usize + 44] = 4;
+        lap[29 + 57 * ((player as usize + 1) % 24) + 33] = 99;
+        for bytes in [session, lap, wire(6, player, 61)] {
+            assert!(state.apply(parse(&bytes).unwrap(), now));
+        }
+        assert_eq!(state.snapshot.lap_counter(now), Some((7, 18)));
+        let mut next_lap = lap_wire(player, 62, 1, None);
+        next_lap[29 + 57 * player as usize + 33] = 8;
+        next_lap[29 + 57 * player as usize + 44] = 4;
+        assert!(state.apply(parse(&next_lap).unwrap(), now));
+        assert_eq!(state.snapshot.lap_counter(now), Some((8, 18)));
+        let mut unknown_total = state.snapshot;
+        unknown_total.session.as_mut().unwrap().value.total_laps = 0;
+        assert_eq!(unknown_total.lap_counter(now), None);
+        let mut unknown_lap = state.snapshot;
+        unknown_lap.current_lap.as_mut().unwrap().value = 0;
+        assert_eq!(unknown_lap.lap_counter(now), None);
+        let mut stale_lap = state.snapshot;
+        stale_lap.current_lap.as_mut().unwrap().received =
+            now - FAST_TTL - Duration::from_millis(1);
+        assert!(stale_lap.on_track(now));
+        assert_eq!(stale_lap.lap_counter(now), None);
+        let mut stale_session = state.snapshot;
+        stale_session.session.as_mut().unwrap().received =
+            now - DAMAGE_TTL - Duration::from_millis(1);
+        assert_eq!(stale_session.lap_counter(now), None);
+        let mut new_session = wire(6, player, 1);
+        new_session[7..15].copy_from_slice(&43u64.to_le_bytes());
+        assert!(state.apply(parse(&new_session).unwrap(), now));
+        assert_eq!(state.snapshot.lap_counter(now), None);
+    }
+    let session = demo::sample(14.0, 840)[6];
+    let mut buffer = [0; 926];
+    let length = demo::encode(session, &mut buffer);
+    assert_eq!(parse(&buffer[..length]).unwrap(), session);
+}
+
+#[test]
 fn visibility_reads_session_and_local_driver_fields_and_validates_booleans() {
     for player in [0, 23] {
         let mut session = wire(1, player, 60);
@@ -313,6 +360,8 @@ fn visibility_reads_session_and_local_driver_fields_and_validates_booleans() {
         assert_eq!(
             data,
             SessionData {
+                total_laps: 0,
+                track_length_m: 0,
                 paused: true,
                 formula: 13,
                 session_type: 18,

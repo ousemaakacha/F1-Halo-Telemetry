@@ -200,6 +200,7 @@ fn receive_loop(
                     Err(ParseError::Format(_) | ParseError::Version(_)) => {
                         state.snapshot.counters.unsupported += 1;
                         state.snapshot.source = Connection::Unsupported;
+                        state.invalidate_time_trial();
                         state.invalidate_race_gaps();
                         for id in [1, 2, 3, 7] {
                             state.invalidate_race_alerts(id);
@@ -209,6 +210,7 @@ fn receive_loop(
                     Err(_) => {
                         state.snapshot.counters.malformed += 1;
                         if size > 6 && buffer[6] == 2 {
+                            state.invalidate_time_trial();
                             state.invalidate_race_gaps();
                         }
                         if size > 6 {

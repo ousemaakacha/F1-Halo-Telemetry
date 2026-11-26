@@ -16,9 +16,10 @@ const WING_LIFT: f32 = 20.0;
 const WING_TOP: f32 = -66.0;
 const WING_BOTTOM: f32 = 14.0;
 const NAME_ROWS: [f32; 2] = [WING_TOP + 20.0, WING_BOTTOM - 20.0];
-const NAME_ANGLES: (f32, f32) = (-28.1, -21.6);
-const TYRE_ANGLE: f32 = -20.0;
-const TYRE_DIAMETER: f32 = 18.0;
+const NAME_ANGLES: (f32, f32) = (-28.1, -22.1);
+const TYRE_ANGLE: f32 = -20.3;
+const TYRE_DIAMETER: f32 = 24.0;
+const DETAIL_TEXT_SCALE: f32 = 0.75;
 const SPLIT_ROW: f32 = (WING_TOP + WING_BOTTOM) / 2.0;
 const META_ROW: f32 = WING_TOP + 13.0;
 const GEAR_ROW: f32 = WING_TOP + 34.0;
@@ -27,6 +28,57 @@ const RPM_CAPTION: f32 = WING_BOTTOM - 12.0;
 const FIRST_GEAR: f32 = 19.5;
 const LAST_GEAR: f32 = 30.5;
 type Point = (f32, f32);
+
+fn delta_colour(delta: i64) -> [u8; 3] {
+    if delta < 0 {
+        AERO_GREEN
+    } else if delta > 0 {
+        AERO_RED
+    } else {
+        WHITE
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LeftPanel {
+    #[default]
+    Auto,
+    Race,
+    TimeTrial,
+}
+
+impl LeftPanel {
+    pub(crate) fn shows_time_trial(self, snapshot: &Snapshot) -> bool {
+        match self {
+            Self::Auto => snapshot
+                .session
+                .is_some_and(|session| session.value.session_type == 18),
+            Self::Race => false,
+            Self::TimeTrial => true,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct PanelSelection {
+    session: (u64, u64),
+    mode: LeftPanel,
+}
+
+impl PanelSelection {
+    pub fn mode(&self, snapshot: &Snapshot) -> LeftPanel {
+        if self.session == (snapshot.source_epoch, snapshot.session_generation) {
+            self.mode
+        } else {
+            LeftPanel::Auto
+        }
+    }
+
+    pub fn select(&mut self, mode: LeftPanel, snapshot: &Snapshot) {
+        self.session = (snapshot.source_epoch, snapshot.session_generation);
+        self.mode = mode;
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LapBudget {
@@ -76,6 +128,54 @@ fn tyre_style(compound: Option<u8>) -> (&'static str, [u8; 3]) {
         Some(8) => ("W", [41, 150, 255]),
         Some(7) => ("I", [44, 218, 120]),
         _ => ("?", OFF),
+    }
+}
+
+fn driver_abbreviation<'a>(name: &str, buffer: &'a mut [u8; 12]) -> &'a str {
+    let separator = |character: char| character.is_whitespace() || character == '.';
+    let name = name.trim();
+    let surname = name
+        .rsplit(separator)
+        .find(|part| !part.is_empty())
+        .unwrap_or("");
+    if surname.eq_ignore_ascii_case("schumacher") {
+        let first = name.split(separator).next().unwrap_or("");
+        return if first.eq_ignore_ascii_case("ralf") || first.eq_ignore_ascii_case("r") {
+            "RSC"
+        } else {
+            "MSC"
+        };
+    }
+    if surname.eq_ignore_ascii_case("vries") {
+        return "DEV";
+    }
+    if surname.eq_ignore_ascii_case("guanyu") {
+        return "ZHO";
+    }
+    let mut len = 0;
+    for character in surname
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_uppercase)
+        .take(3)
+    {
+        let character = match character {
+            'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' => 'A',
+            'Ç' => 'C',
+            'È' | 'É' | 'Ê' | 'Ë' => 'E',
+            'Ì' | 'Í' | 'Î' | 'Ï' => 'I',
+            'Ñ' => 'N',
+            'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' => 'O',
+            'Ù' | 'Ú' | 'Û' | 'Ü' => 'U',
+            'Ý' | 'Ÿ' => 'Y',
+            other => other,
+        };
+        len += character.encode_utf8(&mut buffer[len..]).len();
+    }
+    if len == 0 {
+        "--"
+    } else {
+        std::str::from_utf8(&buffer[..len]).unwrap()
     }
 }
 
@@ -207,9 +307,9 @@ impl Pedal {
         opacity: f32,
         budget: Option<LapBudget>,
     ) {
-        p.geometry(&self.housing, GLASS, opacity * 0.8);
+        p.geometry(&self.housing, GLASS, opacity);
         p.stroke_geometry(&self.housing, BORDER, 1.0, 0.65);
-        p.geometry(&self.energy, [0, 37, 53], opacity * 0.9);
+        p.geometry(&self.energy, [0, 37, 53], opacity);
         if let Some(budget) = budget.filter(|b| b.fraction > 0.0) {
             let height = 92.0 * budget.fraction;
             p.clipped(
@@ -230,12 +330,14 @@ impl Pedal {
             }
         }
         let (x, y) = side_point(self.right, 97.5, -1.0);
-        p.text(
-            if self.right { "DPL" } else { "RCH" },
-            rect(x - 14.0, y - 7.0, 28.0, 14.0),
-            HudLabel,
-            if budget.is_some() { WHITE } else { MUTED },
-        );
+        p.scaled((x, y), DETAIL_TEXT_SCALE, |p| {
+            p.text(
+                if self.right { "DPL" } else { "RCH" },
+                rect(x - 14.0, y - 7.0, 28.0, 14.0),
+                HudLabel,
+                if budget.is_some() { WHITE } else { MUTED },
+            );
+        });
         let (x, y) = side_point(self.right, 134.0, 69.0);
         p.rotated((x, y), if self.right { 15.0 } else { -15.0 }, |p| {
             p.text(
@@ -252,6 +354,7 @@ pub(super) struct Replica {
     left: ID2D1PathGeometry,
     right: ID2D1PathGeometry,
     brow: ID2D1PathGeometry,
+    laps: TextCurve,
     dividers: [ID2D1PathGeometry; 3],
     ring: ID2D1PathGeometry,
     inner_ring: ID2D1PathGeometry,
@@ -260,6 +363,11 @@ pub(super) struct Replica {
     names: [TextCurve; 2],
     positions: [TextCurve; 2],
     gaps: [TextCurve; 2],
+    tt_divider: ID2D1PathGeometry,
+    tt_headings: [TextCurve; 2],
+    tt_values: [TextCurve; 2],
+    tt_sector_labels: [TextCurve; 3],
+    tt_sectors: [TextCurve; 3],
     aero: [TextCurve; 2],
     gears: [TextCurve; 9],
     gear_label: TextCurve,
@@ -274,6 +382,10 @@ impl Replica {
             left: modern::panel(factory, WINGS[0].0, WINGS[0].1, WING_TOP, WING_BOTTOM)?,
             right: modern::panel(factory, WINGS[1].0, WINGS[1].1, WING_TOP, WING_BOTTOM)?,
             brow: modern::brow(factory)?,
+            laps: TextCurve::new((0..=96).map(|i| {
+                let (x, y) = classic::curve_point(&modern::BROW, 0.3 + 0.45 * i as f32 / 96.0);
+                (x, y + 12.0)
+            })),
             dividers: [
                 path(
                     factory,
@@ -309,6 +421,28 @@ impl Replica {
             names: NAME_ROWS.map(|offset| text_curve(NAME_ANGLES.0, NAME_ANGLES.1, offset)),
             positions: NAME_ROWS.map(|offset| text_curve(-30.9, -28.9, offset)),
             gaps: NAME_ROWS.map(|offset| text_curve(-18.0, -13.5, offset)),
+            tt_divider: path(
+                factory,
+                (0..=96).map(|i| {
+                    wing_point(
+                        WINGS[0].0 + (WINGS[0].1 - WINGS[0].0) * i as f32 / 96.0,
+                        -17.0,
+                    )
+                }),
+                false,
+            )?,
+            tt_headings: [(-30.4, -22.8), (-21.7, -14.0)]
+                .map(|(start, end)| text_curve(start, end, WING_TOP + 11.0)),
+            tt_values: [(-30.4, -22.8), (-21.7, -14.0)]
+                .map(|(start, end)| text_curve(start, end, WING_TOP + 33.0)),
+            tt_sector_labels: std::array::from_fn(|i| {
+                let start = -30.5 + i as f32 * 5.7;
+                text_curve(start, start + 4.9, -8.0)
+            }),
+            tt_sectors: std::array::from_fn(|i| {
+                let start = -30.5 + i as f32 * 5.7;
+                text_curve(start, start + 4.9, 5.0)
+            }),
             aero: [META_ROW, META_ROW + 15.0].map(|offset| text_curve(13.7, 18.0, offset)),
             gears: std::array::from_fn(|i| {
                 let angle = FIRST_GEAR + i as f32 * (LAST_GEAR - FIRST_GEAR) / 8.0;
@@ -321,7 +455,14 @@ impl Replica {
         })
     }
 
-    pub fn draw(&self, p: &Painter<'_>, snapshot: &Snapshot, settings: &Settings, now: Instant) {
+    pub fn draw(
+        &self,
+        p: &Painter<'_>,
+        snapshot: &Snapshot,
+        settings: &Settings,
+        panel: LeftPanel,
+        now: Instant,
+    ) {
         p.translated(ORIGIN, |p| {
             let active = snapshot.driving(now);
             let tel = snapshot.telemetry.filter(|_| active).map(|t| t.value);
@@ -342,18 +483,36 @@ impl Replica {
 
             p.stroke_geometry(&self.brow, [15, 25, 28], 3.0, 0.2);
             p.stroke_geometry(&self.brow, [220, 232, 231], 1.2, 0.85);
+            p.scaled(self.laps.centre(), 0.6, |p| {
+                if let Some((current, total)) = snapshot.lap_counter(now) {
+                    p.curved_textf(
+                        format_args!("LAPS {current}/{total}"),
+                        &self.laps,
+                        HudFuel,
+                        WHITE,
+                    );
+                } else {
+                    p.curved_text("LAPS --/--", &self.laps, HudFuel, MUTED);
+                }
+            });
             p.translated((0.0, -WING_LIFT), |p| {
                 for panel in [&self.left, &self.right] {
-                    p.material_geometry(panel, opacity * 0.72);
+                    p.material_geometry(panel, opacity);
                     p.stroke_geometry(panel, accent, 1.0, 0.85);
                 }
-                for divider in &self.dividers {
+                let time_trial = panel.shows_time_trial(snapshot);
+                for divider in self.dividers.iter().skip(if time_trial { 2 } else { 0 }) {
                     p.stroke_geometry(divider, accent, 0.8, 0.5);
                 }
-                self.draw_standings(p, snapshot, now);
+                if time_trial {
+                    p.stroke_geometry(&self.tt_divider, accent, 0.8, 0.5);
+                    self.draw_time_trial(p, snapshot, now);
+                } else {
+                    self.draw_standings(p, snapshot, now);
+                }
             });
 
-            p.circle(DIAL.0, DIAL.1, 79.5, GLASS, opacity * 0.9);
+            p.circle(DIAL.0, DIAL.1, 79.5, GLASS, opacity);
             p.stroke_geometry(&self.mesh, BORDER, 0.55, opacity * 0.26);
             p.stroke_geometry(&self.ring, [28, 44, 51], 5.0, 0.8);
             p.stroke_geometry(&self.ring, [142, 197, 221], 1.8, 0.95);
@@ -393,7 +552,100 @@ impl Replica {
                     MUTED,
                 );
             }
+            if let Some(alert) = snapshot.race_alert(now) {
+                p.translated((0.0, 20.0), |p| {
+                    shift::draw_alert(p, alert.value, opacity);
+                });
+            }
         });
+    }
+
+    fn draw_time_trial(&self, p: &Painter<'_>, snapshot: &Snapshot, now: Instant) {
+        let reading = snapshot.time_trial(now);
+        let delta = reading.and_then(|reading| reading.delta_ms);
+        let caption = match reading {
+            Some(reading) if reading.reference_ms.is_some() => "TT · DELTA",
+            Some(reading) if reading.session_best_ms.is_some() => "TT · NO LAP TRACE",
+            _ => "TT · NO VALID REF",
+        };
+        let (validity, colour) = match reading {
+            Some(reading) if reading.invalid => ("LAP · INVALID", AERO_RED),
+            Some(_) => ("LAP · VALID", AERO_GREEN),
+            None => ("LAP · --", MUTED),
+        };
+        for (curve, label, colour) in [
+            (&self.tt_headings[0], caption, MUTED),
+            (&self.tt_headings[1], validity, colour),
+        ] {
+            p.scaled(curve.centre(), DETAIL_TEXT_SCALE, |p| {
+                p.curved_text(label, curve, HudLabel, colour);
+            });
+        }
+        if let Some(delta) = delta {
+            p.curved_textf(
+                format_args!(
+                    "{}{}.{:03}",
+                    if delta < 0 { "-" } else { "+" },
+                    delta.unsigned_abs() / 1000,
+                    delta.unsigned_abs() % 1000
+                ),
+                &self.tt_values[0],
+                HudFuel,
+                delta_colour(delta),
+            );
+        } else {
+            p.curved_text("--", &self.tt_values[0], HudFuel, MUTED);
+        }
+        if let Some(reading) = reading {
+            p.curved_textf(
+                format_args!(
+                    "{}:{:02}.{:03}",
+                    reading.current_ms / 60_000,
+                    reading.current_ms / 1000 % 60,
+                    reading.current_ms % 1000
+                ),
+                &self.tt_values[1],
+                HudFuel,
+                WHITE,
+            );
+        } else {
+            p.curved_text("--:--.---", &self.tt_values[1], HudFuel, MUTED);
+        }
+        for i in 0..3 {
+            let split = reading.and_then(|reading| reading.sector_deltas_ms[i]);
+            let label = &self.tt_sector_labels[i];
+            p.scaled(label.centre(), 0.65, |p| {
+                if let Some(delta) = split {
+                    p.curved_textf(
+                        format_args!(
+                            "S{} {}{}.{:03}",
+                            i + 1,
+                            if delta < 0 { "-" } else { "+" },
+                            delta.unsigned_abs() / 1000,
+                            delta.unsigned_abs() % 1000
+                        ),
+                        label,
+                        HudLabel,
+                        delta_colour(delta),
+                    );
+                } else {
+                    p.curved_textf(format_args!("S{}", i + 1), label, HudLabel, MUTED);
+                }
+            });
+            let curve = &self.tt_sectors[i];
+            p.scaled(curve.centre(), DETAIL_TEXT_SCALE, |p| {
+                if let Some(millis) = reading.and_then(|reading| reading.sectors_ms[i]) {
+                    p.curved_textf(
+                        format_args!("{}.{:03}", millis / 1000, millis % 1000),
+                        curve,
+                        HudLabel,
+                        WHITE,
+                    );
+                } else {
+                    p.curved_text("--.---", curve, HudLabel, MUTED);
+                }
+            });
+        }
     }
 
     fn draw_standings(&self, p: &Painter<'_>, snapshot: &Snapshot, now: Instant) {
@@ -422,14 +674,12 @@ impl Replica {
             } else {
                 p.curved_text("--", &self.positions[i], HudNumber, MUTED);
             }
-            let mut uppercase = [0; 32];
-            let name = name.unwrap_or("--");
-            uppercase[..name.len()].copy_from_slice(name.as_bytes());
-            uppercase[..name.len()].make_ascii_uppercase();
+            let mut abbreviation = [0; 12];
+            let name = driver_abbreviation(name.unwrap_or("--"), &mut abbreviation);
             p.curved_text_ellipsized(
-                std::str::from_utf8(&uppercase[..name.len()]).unwrap(),
+                name,
                 &self.names[i],
-                HudStraight,
+                HudDriver,
                 if name == "--" { MUTED } else { WHITE },
             );
             let compound = opponent
@@ -562,11 +812,20 @@ impl Replica {
             0.9,
         );
         let caption = rect(battery.left, battery.top, 64.0, 18.0);
-        if let Some(percent) = percentage {
-            p.textf(format_args!("{percent:.0}%"), caption, HudFuel, WHITE);
-        } else {
-            p.text("--%", caption, HudFuel, MUTED);
-        }
+        p.scaled(
+            (
+                (caption.left + caption.right) / 2.0,
+                (caption.top + caption.bottom) / 2.0,
+            ),
+            DETAIL_TEXT_SCALE,
+            |p| {
+                if let Some(percent) = percentage {
+                    p.textf(format_args!("{percent:.0}%"), caption, HudFuel, WHITE);
+                } else {
+                    p.text("--%", caption, HudFuel, MUTED);
+                }
+            },
+        );
     }
 
     fn draw_gears(
@@ -628,12 +887,14 @@ impl Replica {
                 i as i8
             };
             let selected = tel.is_some_and(|t| t.gear == gear);
-            p.curved_text(
-                gear_label(gear),
-                curve,
-                if selected { HudNumber } else { HudFuel },
-                if selected { WHITE } else { MUTED },
-            );
+            p.scaled(curve.centre(), DETAIL_TEXT_SCALE, |p| {
+                p.curved_text(
+                    gear_label(gear),
+                    curve,
+                    if selected { HudNumber } else { HudFuel },
+                    if selected { WHITE } else { MUTED },
+                );
+            });
         }
         let rpm = rpm_fraction(tel, status);
         for i in 0..64 {
@@ -686,6 +947,74 @@ impl Replica {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn race_driver_names_use_three_letter_codes_for_surnames_full_names_and_unicode() {
+        for (name, expected) in [
+            ("NORRIS", "NOR"),
+            ("Lando Norris", "NOR"),
+            ("Max Verstappen", "VER"),
+            ("Charles Leclerc", "LEC"),
+            ("LÉCLERC", "LEC"),
+            ("Nico Hülkenberg", "HUL"),
+            ("Sergio Pérez", "PER"),
+            ("Zhou Guanyu", "ZHO"),
+            ("Guanyu Zhou", "ZHO"),
+            ("Nyck de Vries", "DEV"),
+            ("Mick Schumacher", "MSC"),
+            ("Michael Schumacher", "MSC"),
+            ("SCHUMACHER", "MSC"),
+            ("Ralf Schumacher", "RSC"),
+            ("R. Schumacher", "RSC"),
+            (" J.Doe ", "DOE"),
+            ("O'Ward", "OWA"),
+            ("Akach42", "AKA"),
+            ("Me", "ME"),
+            ("张伟博", "张伟博"),
+            ("ßa", "SSA"),
+            ("", "--"),
+            ("  ", "--"),
+            ("--", "--"),
+        ] {
+            assert_eq!(driver_abbreviation(name, &mut [0; 12]), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn left_panel_auto_and_manual_selection_follow_session_lifecycle() {
+        let now = Instant::now();
+        let mut snapshot = Snapshot {
+            session_generation: 1,
+            session: Some(Timed {
+                value: SessionData {
+                    session_type: 18,
+                    ..SessionData::default()
+                },
+                received: now,
+                overall_frame: 1,
+            }),
+            ..Snapshot::default()
+        };
+        let mut selection = PanelSelection::default();
+        assert!(selection.mode(&snapshot).shows_time_trial(&snapshot));
+        selection.select(LeftPanel::Race, &snapshot);
+        assert!(!selection.mode(&snapshot).shows_time_trial(&snapshot));
+        snapshot.counters.flashbacks += 1;
+        snapshot.session.as_mut().unwrap().value.session_type = 10;
+        assert_eq!(selection.mode(&snapshot), LeftPanel::Race);
+        selection.select(LeftPanel::TimeTrial, &snapshot);
+        assert!(selection.mode(&snapshot).shows_time_trial(&snapshot));
+        selection.select(LeftPanel::Auto, &snapshot);
+        assert!(!selection.mode(&snapshot).shows_time_trial(&snapshot));
+        selection.select(LeftPanel::TimeTrial, &snapshot);
+        snapshot.session_generation += 1;
+        assert_eq!(selection.mode(&snapshot), LeftPanel::Auto);
+        selection.select(LeftPanel::TimeTrial, &snapshot);
+        snapshot.source_epoch += 1;
+        assert_eq!(selection.mode(&snapshot), LeftPanel::Auto);
+        snapshot.session = None;
+        assert!(!selection.mode(&snapshot).shows_time_trial(&snapshot));
+    }
 
     #[test]
     fn lap_budgets_use_separate_limits_and_reset_with_the_reported_counters() {

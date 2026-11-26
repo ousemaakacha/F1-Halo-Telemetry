@@ -154,10 +154,12 @@ pub fn run(options: Options) -> Result<(), String> {
         timer,
         diagnostics: Diagnostics::default(),
         snapshot: Snapshot::default(),
+        f1_tv_panel: hud::halo::PanelSelection::default(),
         demo: options.demo,
         edit: false,
         overlays_visible: true,
         session_active: false,
+        time_trial: false,
         rear_hidden: false,
         rear_input: RearInput::default(),
         dirty: true,
@@ -176,7 +178,7 @@ pub fn run(options: Options) -> Result<(), String> {
         first_memory: 0,
         previous_live: false,
         forced_recreation: false,
-        fresh_mask: u16::MAX,
+        fresh_mask: u32::MAX,
         monitor_hz: 60,
         race_foreground: None,
     };
@@ -252,10 +254,12 @@ struct App {
     diagnostics: Diagnostics,
     event_log: EventLog,
     snapshot: Snapshot,
+    f1_tv_panel: hud::halo::PanelSelection,
     demo: bool,
     edit: bool,
     overlays_visible: bool,
     session_active: bool,
+    time_trial: bool,
     rear_hidden: bool,
     rear_input: RearInput,
     dirty: bool,
@@ -274,7 +278,7 @@ struct App {
     first_memory: u64,
     previous_live: bool,
     forced_recreation: bool,
-    fresh_mask: u16,
+    fresh_mask: u32,
     monitor_hz: u32,
     race_foreground: Option<HWND>,
 }
@@ -378,7 +382,7 @@ impl App {
             }
             let visible = self
                 .settings
-                .effective_layouts(self.huds_visible(), self.rear_hidden)
+                .effective_layouts(self.huds_visible(), self.rear_hidden, self.time_trial)
                 .iter()
                 .any(|layout| layout.visible);
             if self.dirty && visible && self.graphics.is_some() && now >= self.next_frame {
@@ -461,6 +465,10 @@ impl App {
                     self.snapshot.race_gaps.map(|v| v.received),
                     crate::telemetry::state::FAST_TTL,
                 ),
+                (
+                    self.snapshot.time_trial.map(|v| v.received),
+                    crate::telemetry::state::FAST_TTL,
+                ),
             ] {
                 if let Some(expiry) = received
                     .map(|r| r + ttl + Duration::from_millis(1))
@@ -499,9 +507,9 @@ impl App {
         if let Some(sample) = self.graphics.as_mut().and_then(Graphics::begin_gpu_sample) {
             self.diagnostics.gpu_sample(sample);
         }
-        let layouts = self
-            .settings
-            .effective_layouts(self.huds_visible(), self.rear_hidden);
+        let layouts =
+            self.settings
+                .effective_layouts(self.huds_visible(), self.rear_hidden, self.time_trial);
         for (index, layout) in layouts.into_iter().enumerate() {
             if !layout.visible {
                 continue;
@@ -523,6 +531,7 @@ impl App {
                     &self.snapshot,
                     &self.settings,
                     self.edit,
+                    self.f1_tv_panel.mode(&self.snapshot),
                     now,
                 );
             } else {
@@ -556,8 +565,13 @@ impl App {
 
     fn update_session_visibility(&mut self, now: Instant) -> Result<(), String> {
         let active = self.snapshot.on_track(now);
-        if active != self.session_active {
+        let time_trial = self
+            .f1_tv_panel
+            .mode(&self.snapshot)
+            .shows_time_trial(&self.snapshot);
+        if active != self.session_active || time_trial != self.time_trial {
             self.session_active = active;
+            self.time_trial = time_trial;
             self.apply_layouts()?;
             self.dirty = true;
             self.next_frame = now;
@@ -568,10 +582,11 @@ impl App {
     }
 
     fn apply_layouts(&self) -> Result<(), String> {
-        for (overlay, layout) in self.overlays.iter().zip(
-            self.settings
-                .effective_layouts(self.huds_visible(), self.rear_hidden),
-        ) {
+        for (overlay, layout) in self.overlays.iter().zip(self.settings.effective_layouts(
+            self.huds_visible(),
+            self.rear_hidden,
+            self.time_trial,
+        )) {
             overlay
                 .apply_layout(layout)
                 .map_err(|error| error.to_string())?;
@@ -606,7 +621,9 @@ impl App {
         if hidden != self.rear_hidden {
             let previous = self.rear_hidden;
             self.rear_hidden = hidden;
-            let layout = self.settings.effective_layouts(self.huds_visible(), hidden)[0];
+            let layout =
+                self.settings
+                    .effective_layouts(self.huds_visible(), hidden, self.time_trial)[0];
             if let Err(error) = self.overlays[0].apply_layout(layout) {
                 self.rear_hidden = previous;
                 self.panel.result(&format!("Halo visibility: {error}"));
@@ -648,7 +665,9 @@ impl App {
         next.hide_halo_side_view = self.panel.checked(panel::SIDE_VIEW);
         let result = (|| {
             self.overlays[0]
-                .apply_layout(next.effective_layouts(self.huds_visible(), false)[0])
+                .apply_layout(
+                    next.effective_layouts(self.huds_visible(), false, self.time_trial)[0],
+                )
                 .map_err(|error| error.to_string())?;
             next.save(&self.config)
         })();
@@ -741,6 +760,7 @@ impl App {
                     self.overlays_visible
                         && (self.edit || demo || (!source_changed && self.session_active)),
                     rear_hidden,
+                    !source_changed && self.time_trial,
                 )) {
                     overlay
                         .apply_layout(layout)
@@ -765,7 +785,8 @@ impl App {
                 for (index, (overlay, layout)) in self.overlays.iter().zip(old_layouts).enumerate()
                 {
                     let _ = overlay.apply_layout(layout.with_global_visibility(
-                        self.huds_visible() && !(index == 0 && self.rear_hidden),
+                        self.huds_visible()
+                            && !(index == 0 && self.rear_hidden || index == 1 && self.time_trial),
                     ));
                 }
                 return Err(error);
@@ -777,6 +798,7 @@ impl App {
         if source_changed {
             self.snapshot = Snapshot::default();
             self.session_active = false;
+            self.time_trial = false;
         }
         self.monitor_hz = overlay::monitor_refresh(self.overlays[0].hwnd);
         self.panel.populate_layout(&self.settings);
@@ -800,7 +822,10 @@ impl App {
         next.validate()?;
         let result = (|| {
             self.overlays[0]
-                .apply_layout(next.effective_layouts(self.huds_visible(), self.rear_hidden)[0])
+                .apply_layout(
+                    next.effective_layouts(self.huds_visible(), self.rear_hidden, self.time_trial)
+                        [0],
+                )
                 .map_err(|error| error.to_string())?;
             next.halo = self.overlays[0].layout(next.halo);
             if save {
@@ -862,10 +887,13 @@ impl App {
                     self.panel.scroll(true, if delta > 0 { 0 } else { 1 }, 0);
                 }
             }
-            Action::ContextMenu => {
-                self.panel
-                    .context_menu(self.edit, self.demo, self.overlays_visible)
-            }
+            Action::ContextMenu => self.panel.context_menu(
+                self.edit,
+                self.demo,
+                self.overlays_visible,
+                (self.settings.halo_model == crate::settings::HaloModel::Replica)
+                    .then(|| self.f1_tv_panel.mode(&self.snapshot)),
+            ),
             Action::LayoutChanged(index) => {
                 let _ = index;
                 self.sync_layout()?;
@@ -899,6 +927,16 @@ impl App {
                 panel::REAR_VIEW | panel::SIDE_VIEW => self.apply_view_filters()?,
                 panel::SAVE_PROFILE => self.halo_profile(true)?,
                 panel::LOAD_PROFILE => self.halo_profile(false)?,
+                panel::F1_TV_AUTO | panel::F1_TV_RACE | panel::F1_TV_TT => {
+                    let mode = match command {
+                        panel::F1_TV_RACE => hud::halo::LeftPanel::Race,
+                        panel::F1_TV_TT => hud::halo::LeftPanel::TimeTrial,
+                        _ => hud::halo::LeftPanel::Auto,
+                    };
+                    self.f1_tv_panel.select(mode, &self.snapshot);
+                    self.dirty = true;
+                    self.next_frame = Instant::now();
+                }
                 panel::EDIT => self.set_edit(!self.edit)?,
                 panel::TOGGLE_OVERLAYS => self.set_overlays_visible(!self.overlays_visible)?,
                 panel::SHOW => {
@@ -959,6 +997,7 @@ impl App {
                     self.demo = demo;
                     self.snapshot = Snapshot::default();
                     self.session_active = false;
+                    self.time_trial = false;
                     self.apply_layouts()?;
                     self.panel.check(panel::DEMO, self.demo);
                     self.dirty = true;
@@ -1058,7 +1097,7 @@ impl App {
             "elapsed_seconds": now.saturating_duration_since(self.start).as_secs_f64(),
             "demo": self.demo, "edit": self.edit,
             "overlays_enabled": self.overlays_visible,
-            "visible": self.settings.effective_layouts(self.huds_visible(), self.rear_hidden).map(|l| l.visible),
+            "visible": self.settings.effective_layouts(self.huds_visible(), self.rear_hidden, self.time_trial).map(|l| l.visible),
             "session_active": self.session_active,
             "connection": self.snapshot.connection(now).label(),
             "telemetry_age_ms": self.snapshot.telemetry.map(|v| age(v.received)),

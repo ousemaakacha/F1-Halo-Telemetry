@@ -107,8 +107,13 @@ massimo 100 record e 8 stint; conteggi, indici migliori e flag riservati sono
 validati. Il confronto storico resta disponibile nel modello dati; gli HUD
 mostrano il distacco posteriore da Lap Data, indipendente dalla validità del giro.
 
-Session usa sessionType a offset corpo 6, formula a offset corpo 8,
+Session usa totalLaps a offset corpo 3, sessionType a offset corpo 6, formula a offset corpo 8,
 gamePaused a offset corpo 14 e isSpectating a offset corpo 15.
+Il contatore di f1 tv combina totalLaps con currentLapNum della vettura locale
+(offset 33 del record Lap Data). Richiede il contesto attivo in pista,
+Session fresco entro 2 s e giro corrente entro 500 ms. Zero o dato assente
+producono un contatore non disponibile, senza stimare un totale per le
+sessioni che non lo forniscono.
 La visibilità automatica richiede sessionType 1–18 (prove libere, qualifiche,
 Sprint Shootout, gare e Time Trial), nessuna pausa/spettatore, resultStatus 2 e
 driverStatus 1–4 della vettura locale. driverStatus 0 indica il garage;
@@ -151,7 +156,45 @@ svuotano i due abbinamenti; non viene sostituito un avversario con il pilota loc
 
 ## Ordinamento e validità
 
-### Avvisi temporanei Shift
+### Cronometraggio Time Trial di f1 tv
+
+Si riusano Session, Lap Data e Session History del pilota `playerCarIndex`.
+Session +4 fornisce `trackLength` (u16); `sessionType == 18` seleziona TT.
+Gli offset nel record Lap Data sono: ultimo tempo u32 +0, tempo corrente u32
++4, S1 u16/u8 +8/+10, S2 u16/u8 +11/+13, distanza f32 +20, settore u8 +36
+e giro invalidato u8 +37. I settori combinano minuti × 60000 e millisecondi;
+zero in un settore non ancora concluso indica dato assente. Distanza non finita,
+settore oltre 2, flag diverso da 0/1 e parti millisecondi oltre 59999 invalidano
+soltanto il cronometraggio TT, conservando i dati gara dello stesso pacchetto.
+
+Il thread UDP registra coppie distanza/tempo della vettura locale. Il delta
+confronta tempi alla stessa distanza, interpolando linearmente soltanto fra
+campioni della traccia acquisita; non estrapola oltre gli estremi. Non integra
+velocità, non usa gap di gara come delta e non costruisce tracce da tempi totali
+o settori. Si conserva un limite di 65536 campioni per traccia. Un giro parziale,
+interrotto per oltre 500 ms, con distanza in retromarcia, settori mancanti o
+invalidazione osservata non può diventare riferimento. La validità è cumulativa
+per tutto il giro. Il passaggio al traguardo usa il reset tempo/distanza da S3
+a S1 e `lastLapTimeInMS`; è supportato anche con numero giro TT invariato.
+S3 concluso è il tempo ufficiale del giro meno S1 e S2. Il settore in corso
+usa il cronometro meno i settori conclusi; lo split comparativo appare soltanto
+dopo aver completato il settore.
+
+Session History conserva il miglior tempo valido noto anche quando la sua
+traccia non è disponibile. Se questo tempo è migliore della traccia registrata,
+dal giro seguente il delta resta indisponibile. Lo storico scarta anche una
+traccia contraddetta dalla validità ufficiale, per esempio dopo la perdita
+dell'ultimo pacchetto di invalidazione. In tal caso non viene sostituito il
+riferimento nel mezzo del giro. Pausa/spettatore e scadenza dei dati nascondono
+i valori; reset, Session Start/End, cambio UID/pilota/sorgente e riavvio
+svuotano il cronometraggio. Il flashback conserva i giri validi completi e il
+miglior tempo noto, interrompendo soltanto la traccia corrente. L'indice interno
+dei giri viene conservato durante le interruzioni: uno storico tardivo non deve
+invalidare una nuova traccia quando il numero giro UDP del TT resta invariato.
+La selezione manuale del pannello usa
+epoca sorgente e generazione sessione; il flashback mantiene tale selezione.
+
+### Avvisi temporanei Shift e f1 tv
 
 Campi verificati nelle strutture EA 2026 già conservate nella cache locale:
 

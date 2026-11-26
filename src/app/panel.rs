@@ -62,6 +62,9 @@ pub const TOGGLE_DEMO: u16 = 211;
 pub const TOGGLE_OVERLAYS: u16 = 212;
 pub const SAVE_PROFILE: u16 = 213;
 pub const LOAD_PROFILE: u16 = 214;
+pub const F1_TV_AUTO: u16 = 215;
+pub const F1_TV_RACE: u16 = 216;
+pub const F1_TV_TT: u16 = 217;
 const DIAGNOSTICS: u16 = 300;
 const RESULT: u16 = 301;
 const CONNECTION_STATUS: u16 = 302;
@@ -86,7 +89,7 @@ fn opacity_percent(text: &str, current: f32) -> std::result::Result<f32, String>
         .replace(',', ".")
         .parse()
         .map_err(|_| "Background: enter a percentage from 0 to 100")?;
-    if percent == (current * 100.0).round() {
+    if percent > 0.0 && percent < 100.0 && percent == (current * 100.0).round() {
         Ok(current)
     } else {
         Ok(percent / 100.0)
@@ -924,7 +927,13 @@ impl Panel {
         self.reflow();
     }
 
-    pub fn context_menu(&self, edit: bool, demo: bool, overlays_visible: bool) {
+    pub fn context_menu(
+        &self,
+        edit: bool,
+        demo: bool,
+        overlays_visible: bool,
+        f1_tv: Option<crate::hud::halo::LeftPanel>,
+    ) {
         unsafe {
             let Ok(menu) = CreatePopupMenu() else {
                 return;
@@ -946,6 +955,36 @@ impl Panel {
                     id as usize,
                     PCWSTR(text.as_ptr()),
                 );
+            }
+            if let Some(mode) = f1_tv {
+                use crate::hud::halo::LeftPanel;
+                if let Ok(views) = CreatePopupMenu() {
+                    for (id, title, view) in [
+                        (F1_TV_AUTO, "Automatic (session)", LeftPanel::Auto),
+                        (F1_TV_RACE, "Race", LeftPanel::Race),
+                        (F1_TV_TT, "Time Trial", LeftPanel::TimeTrial),
+                    ] {
+                        let text = wide(title);
+                        let _ = AppendMenuW(
+                            views,
+                            MF_STRING
+                                | if mode == view {
+                                    MF_CHECKED
+                                } else {
+                                    MF_UNCHECKED
+                                },
+                            id as usize,
+                            PCWSTR(text.as_ptr()),
+                        );
+                    }
+                    let _ = InsertMenuW(
+                        menu,
+                        u32::from(EXIT),
+                        MF_BYCOMMAND | MF_POPUP,
+                        views.0 as usize,
+                        w!("F1 TV left panel"),
+                    );
+                }
             }
             let mut point = POINT::default();
             let _ = GetCursorPos(&mut point);
@@ -1448,6 +1487,19 @@ mod tests {
                 panel.set(id, invalid);
                 assert!(panel.read(&settings).is_err(), "Accepted {invalid}");
             }
+        }
+    }
+
+    #[test]
+    fn background_percent_endpoints_are_exact() {
+        for (text, current, expected) in [
+            ("0", 0.004, 0.0),
+            ("100", 0.996, 1.0),
+            ("0,0", 0.004, 0.0),
+            ("100.0", 0.996, 1.0),
+            ("94", 0.938_7, 0.938_7),
+        ] {
+            assert_eq!(opacity_percent(text, current), Ok(expected));
         }
     }
 

@@ -3,6 +3,8 @@ mod modern;
 mod replica;
 mod shift;
 
+pub use replica::{LeftPanel, PanelSelection};
+
 use crate::{
     graphics::{Font::*, *},
     settings::{HaloModel, Settings},
@@ -232,10 +234,11 @@ impl Halo {
         snapshot: &Snapshot,
         settings: &Settings,
         edit: bool,
+        panel: LeftPanel,
         now: Instant,
     ) {
         if settings.halo_model == HaloModel::Replica {
-            self.replica.draw(p, snapshot, settings, now);
+            self.replica.draw(p, snapshot, settings, panel, now);
         } else {
             p.translated((CONTENT_PADDING, 0.0), |p| {
                 self.draw_content(p, snapshot, settings, now);
@@ -470,15 +473,11 @@ impl Halo {
         }
 
         if !modern_shape {
-            p.rotated(
-                (260.0, 123.0),
-                halo_angle(260.0),
-                |p| {
-                    let pod = rect(230.0, 87.0, 59.0, 74.0);
-                    p.rounded(pod, 10.0, INK, settings.halo.opacity);
-                    p.rounded_outline(pod, 10.0, EDGE, 0.9, 0.9);
-                },
-            );
+            p.rotated((260.0, 123.0), halo_angle(260.0), |p| {
+                let pod = rect(230.0, 87.0, 59.0, 74.0);
+                p.rounded(pod, 10.0, INK, settings.halo.opacity);
+                p.rounded_outline(pod, 10.0, EDGE, 0.9, 0.9);
+            });
         }
 
         if is_modern {

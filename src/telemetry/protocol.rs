@@ -19,7 +19,7 @@ pub struct CarGap {
     pub millis: u32,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct LapData {
     pub position: u8,
     pub result_status: u8,
@@ -29,6 +29,17 @@ pub struct LapData {
     /// Active race neighbours, ahead then behind, with identity for trend tracking.
     pub race_gaps: [Option<CarGap>; 2],
     pub race_control: RaceControl,
+    pub timing: Option<LapTiming>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LapTiming {
+    pub last_ms: u32,
+    pub current_ms: u32,
+    pub distance_m: f32,
+    pub sector: u8,
+    pub sectors_ms: [Option<u32>; 2],
+    pub invalid: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +70,8 @@ pub struct RaceControl {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SessionData {
+    pub total_laps: u8,
+    pub track_length_m: u16,
     pub paused: bool,
     pub formula: u8,
     pub session_type: u8,
@@ -373,6 +386,8 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
         1 => Packet::Session(
             h,
             SessionData {
+                total_laps: b[HEADER_SIZE + 3],
+                track_length_m: u16_at(b, HEADER_SIZE + 4),
                 paused: boolean(b[HEADER_SIZE + 14], "gamePaused")?,
                 formula: b[HEADER_SIZE + 8],
                 session_type: b[HEADER_SIZE + 6],
@@ -451,6 +466,8 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
                         drive_through: car[41],
                         stop_go: car[42],
                     },
+                    // Bad timing must not discard the existing race standings.
+                    timing: lap_timing(car),
                 },
             )
         }
@@ -510,5 +527,26 @@ pub fn parse(b: &[u8]) -> Result<Packet, ParseError> {
         }
         3 => Packet::Event(h, b[29..33].try_into().unwrap()),
         _ => Packet::Ignored(h),
+    })
+}
+
+fn lap_timing(car: &[u8]) -> Option<LapTiming> {
+    if car[36] > 2 || car[37] > 1 || u16_at(car, 8) >= 60_000 || u16_at(car, 11) >= 60_000 {
+        return None;
+    }
+    let distance_m = f32_at(car, 20);
+    if !distance_m.is_finite() {
+        return None;
+    }
+    Some(LapTiming {
+        last_ms: u32_at(car, 0),
+        current_ms: u32_at(car, 4),
+        distance_m,
+        sector: car[36],
+        sectors_ms: [8, 11].map(|offset| {
+            let millis = u32::from(car[offset + 2]) * 60_000 + u32::from(u16_at(car, offset));
+            (millis > 0).then_some(millis)
+        }),
+        invalid: car[37] == 1,
     })
 }

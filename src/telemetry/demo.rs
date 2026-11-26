@@ -109,11 +109,13 @@ pub fn sample(seconds: f32, frame: u32) -> [Packet; 8] {
                     }),
                 ],
                 race_control: RaceControl::default(),
+                timing: None,
             },
         ),
         Packet::Session(
             Header { packet_id: 1, ..h },
             SessionData {
+                total_laps: 18,
                 formula: 13,
                 session_type: 18,
                 ..SessionData::default()
@@ -180,6 +182,8 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
         return size;
     }
     if let Packet::Session(_, session) = packet {
+        b[HEADER_SIZE + 3] = session.total_laps;
+        b[HEADER_SIZE + 4..HEADER_SIZE + 6].copy_from_slice(&session.track_length_m.to_le_bytes());
         b[HEADER_SIZE + 6] = session.session_type;
         b[HEADER_SIZE + 8] = session.formula;
         b[HEADER_SIZE + 14] = session.paused as u8;
@@ -202,6 +206,24 @@ pub fn encode(packet: Packet, buffer: &mut [u8]) -> usize {
         b[offset + 39] = lap.race_control.warnings;
         b[offset + 41] = lap.race_control.drive_through;
         b[offset + 42] = lap.race_control.stop_go;
+        if let Some(timing) = lap.timing {
+            b[offset..offset + 4].copy_from_slice(&timing.last_ms.to_le_bytes());
+            b[offset + 4..offset + 8].copy_from_slice(&timing.current_ms.to_le_bytes());
+            b[offset + 20..offset + 24].copy_from_slice(&timing.distance_m.to_le_bytes());
+            b[offset + 36] = timing.sector;
+            b[offset + 37] = u8::from(timing.invalid);
+            for (offset, time) in [offset + 8, offset + 11].into_iter().zip(timing.sectors_ms) {
+                let time = time.unwrap_or(0);
+                if time / 60_000 > u32::from(u8::MAX) {
+                    return 0;
+                }
+                b[offset..offset + 2].copy_from_slice(&((time % 60_000) as u16).to_le_bytes());
+                b[offset + 2] = (time / 60_000) as u8;
+            }
+        } else {
+            // Mark absent synthetic timing explicitly, rather than encode a valid zero lap.
+            b[offset + 36] = 255;
+        }
         if let Some(ahead) = lap.race_gaps[0] {
             if ahead.car_index as usize >= CAR_COUNT
                 || ahead.car_index == h.player

@@ -41,11 +41,7 @@ pub enum HaloModel {
 }
 
 impl HaloModel {
-    pub const ALL: [Self; 3] = [
-        Self::Modern,
-        Self::Shift,
-        Self::Replica,
-    ];
+    pub const ALL: [Self; 3] = [Self::Modern, Self::Shift, Self::Replica];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -249,11 +245,16 @@ impl Settings {
         Ok(name)
     }
 
-    pub fn effective_layouts(&self, visible: bool, rear_view: bool) -> [Layout; 2] {
+    pub fn effective_layouts(
+        &self,
+        visible: bool,
+        rear_view: bool,
+        time_trial: bool,
+    ) -> [Layout; 2] {
         let rear_view = rear_view && (self.hide_halo_rear_view || self.hide_halo_side_view);
         [
             self.halo.with_global_visibility(visible && !rear_view),
-            self.tyres.with_global_visibility(visible),
+            self.tyres.with_global_visibility(visible && !time_trial),
         ]
     }
 
@@ -428,8 +429,8 @@ mod tests {
         assert_eq!(settings.halo.opacity, 0.37);
         assert_eq!(settings.halo_model, HaloModel::Modern);
         assert_eq!(serde_json::to_value(settings.tyres).unwrap(), tyres);
-        assert!(!settings.effective_layouts(false, false)[0].visible);
-        assert!(!settings.effective_layouts(true, true)[0].visible);
+        assert!(!settings.effective_layouts(false, false, false)[0].visible);
+        assert!(!settings.effective_layouts(true, true, false)[0].visible);
         assert_eq!(settings.active_halo_profile.as_deref(), Some("Ferrari"));
         settings.load_halo_profile("red bull").unwrap();
         assert_eq!(settings.halo.scale, red_bull.scale);
@@ -497,8 +498,8 @@ mod tests {
                         ..Settings::default()
                     };
                     let before = serde_json::to_value(&settings).unwrap();
-                    let behind = settings.effective_layouts(global, true);
-                    let front = settings.effective_layouts(global, false);
+                    let behind = settings.effective_layouts(global, true, false);
+                    let front = settings.effective_layouts(global, false, false);
                     assert!(!behind[0].visible);
                     assert_eq!(behind[1].visible, global && tyres);
                     assert_eq!(front[0].visible, global && halo);
@@ -536,9 +537,40 @@ mod tests {
                         },
                         ..Settings::default()
                     };
-                    let layouts = settings.effective_layouts(global, true);
+                    let layouts = settings.effective_layouts(global, true, false);
                     assert_eq!(layouts[0].visible, global && halo);
                     assert_eq!(layouts[1].visible, global && tyres);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn time_trial_hides_only_tyres_and_restores_the_saved_visibility() {
+        for halo in [false, true] {
+            for tyres in [false, true] {
+                let settings = Settings {
+                    halo: Layout {
+                        visible: halo,
+                        ..Layout::default()
+                    },
+                    tyres: Layout {
+                        visible: tyres,
+                        ..Layout::default()
+                    },
+                    ..Settings::default()
+                };
+                let before = serde_json::to_value(&settings).unwrap();
+                for global in [false, true] {
+                    for rear_view in [false, true] {
+                        let race = settings.effective_layouts(global, rear_view, false);
+                        for time_trial in [true, true, false] {
+                            let layouts = settings.effective_layouts(global, rear_view, time_trial);
+                            assert_eq!(layouts[0].visible, race[0].visible);
+                            assert_eq!(layouts[1].visible, global && tyres && !time_trial);
+                            assert_eq!(serde_json::to_value(&settings).unwrap(), before);
+                        }
+                    }
                 }
             }
         }
@@ -625,7 +657,9 @@ mod tests {
         for removed in ["Wide", "Classic", "Carbon"] {
             let legacy = format!(r#"{{"halo_model":"{removed}"}}"#);
             assert_eq!(
-                serde_json::from_str::<Settings>(&legacy).unwrap().halo_model,
+                serde_json::from_str::<Settings>(&legacy)
+                    .unwrap()
+                    .halo_model,
                 HaloModel::Modern
             );
         }

@@ -3,6 +3,7 @@
 use std::{
     fmt::{self, Write},
     mem::size_of,
+    rc::Rc,
 };
 use windows::{
     Win32::{
@@ -118,13 +119,30 @@ pub enum Font {
     CarbonTitle,
     CarbonWear,
     CarbonTemperature,
+    HudDriver,
 }
 
-const FONT_COUNT: usize = 22;
+const FONT_COUNT: usize = 23;
+const GLYPH_COUNT: usize = 224;
+const MIN_CURVED_TEXT_WIDTH_SCALE: f32 = 0.65;
 
 impl Font {
     fn index(self) -> usize {
         self as usize
+    }
+}
+
+struct FontLoader {
+    factory: IDWriteFactory5,
+    loader: IDWriteInMemoryFontFileLoader,
+}
+
+impl Drop for FontLoader {
+    fn drop(&mut self) {
+        // Each surface retains this registration until its text formats are released.
+        unsafe {
+            let _ = self.factory.UnregisterFontFileLoader(&self.loader);
+        }
     }
 }
 
@@ -136,7 +154,8 @@ pub struct Graphics {
     pub geometry_factory: ID2D1Factory1,
     composition: IDCompositionDevice,
     formats: [IDWriteTextFormat; FONT_COUNT],
-    advances: [[f32; 95]; FONT_COUNT],
+    advances: [[f32; GLYPH_COUNT]; FONT_COUNT],
+    font_loader: Rc<FontLoader>,
     gpu: Option<GpuTimer>,
     pub adapter_name: String,
 }
@@ -172,16 +191,30 @@ impl Graphics {
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             let d2d = geometry_factory.CreateDevice(&dxgi)?;
             let composition: IDCompositionDevice = DCompositionCreateDevice(&dxgi)?;
-            let write: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
-            let make = |size, weight, numeric| -> Result<IDWriteTextFormat> {
+            let write: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_ISOLATED)?;
+            let loader = write.CreateInMemoryFontFileLoader()?;
+            write.RegisterFontFileLoader(&loader)?;
+            let font_loader = Rc::new(FontLoader {
+                factory: write.clone(),
+                loader,
+            });
+            let bytes = include_bytes!("../../assets/fonts/Formula1-Wide.ttf");
+            let file = font_loader.loader.CreateInMemoryFontFileReference(
+                &write,
+                bytes.as_ptr().cast(),
+                bytes.len() as u32,
+                None,
+            )?;
+            let builder = write.CreateFontSetBuilder()?;
+            builder.AddFontFile(&file)?;
+            let collection: IDWriteFontCollection = write
+                .CreateFontCollectionFromFontSet(&builder.CreateFontSet()?)?
+                .cast()?;
+            let make = |size| -> Result<IDWriteTextFormat> {
                 let font = write.CreateTextFormat(
-                    if numeric {
-                        w!("Bahnschrift")
-                    } else {
-                        w!("Segoe UI")
-                    },
-                    None,
-                    weight,
+                    w!("Formula1 Display"),
+                    &collection,
+                    DWRITE_FONT_WEIGHT_NORMAL,
                     DWRITE_FONT_STYLE_NORMAL,
                     DWRITE_FONT_STRETCH_NORMAL,
                     size,
@@ -191,58 +224,42 @@ impl Graphics {
                 font.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
                 Ok(font)
             };
-            let centered = |size, weight, numeric| -> Result<IDWriteTextFormat> {
-                let font = make(size, weight, numeric)?;
-                font.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
-                Ok(font)
-            };
-            let gear_format = centered(102.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?;
-            let hud = |size| centered(size, DWRITE_FONT_WEIGHT_BOLD, true);
-            let carbon = |size| -> Result<IDWriteTextFormat> {
-                let font = write.CreateTextFormat(
-                    w!("Arial"),
-                    None,
-                    DWRITE_FONT_WEIGHT_BOLD,
-                    DWRITE_FONT_STYLE_ITALIC,
-                    DWRITE_FONT_STRETCH_NORMAL,
-                    size,
-                    w!("en-GB"),
-                )?;
-                font.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
-                font.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            let centered = |size| -> Result<IDWriteTextFormat> {
+                let font = make(size)?;
                 font.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
                 Ok(font)
             };
             let formats = [
-                make(11.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, false)?,
-                make(14.0, DWRITE_FONT_WEIGHT_MEDIUM, false)?,
-                make(23.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?,
-                make(31.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?,
-                make(66.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?,
-                gear_format,
-                hud(10.0)?,
-                hud(22.0)?,
-                hud(19.0)?,
-                hud(36.0)?,
-                hud(27.0)?,
-                hud(17.0)?,
-                make(18.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, false)?,
-                centered(14.0, DWRITE_FONT_WEIGHT_MEDIUM, false)?,
-                centered(31.0, DWRITE_FONT_WEIGHT_SEMI_BOLD, true)?,
-                carbon(11.0)?,
-                carbon(22.0)?,
-                carbon(56.0)?,
-                carbon(30.0)?,
-                carbon(30.0)?,
-                carbon(36.0)?,
-                carbon(16.0)?,
+                make(9.0)?,
+                make(11.0)?,
+                make(18.0)?,
+                make(24.0)?,
+                make(50.0)?,
+                centered(78.0)?,
+                centered(8.0)?,
+                centered(18.0)?,
+                centered(15.0)?,
+                centered(29.0)?,
+                centered(23.0)?,
+                centered(13.0)?,
+                make(16.0)?,
+                centered(11.0)?,
+                centered(25.0)?,
+                centered(9.0)?,
+                centered(18.0)?,
+                centered(44.0)?,
+                centered(24.0)?,
+                centered(24.0)?,
+                centered(29.0)?,
+                centered(13.0)?,
+                centered(13.0)?,
             ];
             // Cache advances once instead of measuring curved glyphs every frame.
-            let ascii: [u16; 95] = std::array::from_fn(|i| i as u16 + 32);
-            let mut advances = [[0.0; 95]; FONT_COUNT];
+            let glyphs: [u16; GLYPH_COUNT] = std::array::from_fn(|i| i as u16 + 32);
+            let mut advances = [[0.0; GLYPH_COUNT]; FONT_COUNT];
             for (format, widths) in formats.iter().zip(&mut advances) {
-                let layout = write.CreateTextLayout(&ascii, format, 10000.0, 200.0)?;
-                let mut clusters = [DWRITE_CLUSTER_METRICS::default(); 95];
+                let layout = write.CreateTextLayout(&glyphs, format, 10000.0, 200.0)?;
+                let mut clusters = [DWRITE_CLUSTER_METRICS::default(); GLYPH_COUNT];
                 let mut count = 0;
                 layout.GetClusterMetrics(Some(&mut clusters), &mut count)?;
                 let mut start = 0;
@@ -262,6 +279,7 @@ impl Graphics {
                 composition,
                 formats,
                 advances,
+                font_loader,
                 gpu,
                 adapter_name,
             })
@@ -327,6 +345,7 @@ impl Graphics {
                 carbon,
                 formats: self.formats.clone(),
                 advances: self.advances,
+                _font_loader: self.font_loader.clone(),
                 width,
                 height,
             })
@@ -396,15 +415,15 @@ fn material_brush(
             &[
                 D2D1_GRADIENT_STOP {
                     position: 0.0,
-                    color: colour(palette[0], 0.98),
+                    color: colour(palette[0], 1.0),
                 },
                 D2D1_GRADIENT_STOP {
                     position: 0.48,
-                    color: colour(palette[1], 0.98),
+                    color: colour(palette[1], 1.0),
                 },
                 D2D1_GRADIENT_STOP {
                     position: 1.0,
-                    color: colour(palette[2], 0.98),
+                    color: colour(palette[2], 1.0),
                 },
             ],
             D2D1_GAMMA_2_2,
@@ -431,7 +450,8 @@ pub struct Surface {
     material: ID2D1LinearGradientBrush,
     carbon: ID2D1LinearGradientBrush,
     formats: [IDWriteTextFormat; FONT_COUNT],
-    advances: [[f32; 95]; FONT_COUNT],
+    advances: [[f32; GLYPH_COUNT]; FONT_COUNT],
+    _font_loader: Rc<FontLoader>,
     pub width: u32,
     pub height: u32,
 }
@@ -501,7 +521,7 @@ pub struct Painter<'a> {
     material: &'a ID2D1LinearGradientBrush,
     carbon: &'a ID2D1LinearGradientBrush,
     formats: &'a [IDWriteTextFormat; FONT_COUNT],
-    advances: &'a [[f32; 95]; FONT_COUNT],
+    advances: &'a [[f32; GLYPH_COUNT]; FONT_COUNT],
 }
 
 impl Painter<'_> {
@@ -679,7 +699,18 @@ impl Painter<'_> {
             );
         }
     }
+    fn advance(&self, character: char, font: Font) -> f32 {
+        let index = (character as usize)
+            .checked_sub(32)
+            .filter(|&index| index < GLYPH_COUNT)
+            .unwrap_or((b'?' - 32) as usize);
+        self.advances[font.index()][index]
+    }
+
     pub fn text(&self, value: &str, r: D2D_RECT_F, font: Font, rgb: [u8; 3]) {
+        if r.right <= r.left || r.bottom <= r.top {
+            return;
+        }
         let mut wide = [0u16; 192];
         let mut len = 0;
         for code in value.encode_utf16().take(wide.len()) {
@@ -687,16 +718,27 @@ impl Painter<'_> {
             len += 1;
         }
         self.brush(rgb, 1.0);
-        unsafe {
-            self.context.DrawText(
+        // Fit the wide face into existing data columns without reducing digit height.
+        let width: f32 = value.chars().map(|c| self.advance(c, font)).sum();
+        let available = r.right - r.left;
+        let scale = (available / width.max(1.0)).min(1.0);
+        let centre = ((r.left + r.right) / 2.0, (r.top + r.bottom) / 2.0);
+        let bounds = rect(
+            centre.0 - available / scale / 2.0,
+            r.top,
+            available / scale,
+            r.bottom - r.top,
+        );
+        self.stretched(centre, (scale, 1.0), |p| unsafe {
+            p.context.DrawText(
                 &wide[..len],
-                &self.formats[font.index()],
-                &r,
-                self.brush,
+                &p.formats[font.index()],
+                &bounds,
+                p.brush,
                 D2D1_DRAW_TEXT_OPTIONS_CLIP,
                 DWRITE_MEASURING_MODE_NATURAL,
             );
-        }
+        });
     }
     pub fn textf(&self, value: fmt::Arguments<'_>, r: D2D_RECT_F, font: Font, rgb: [u8; 3]) {
         let mut text = TextBuffer {
@@ -707,13 +749,7 @@ impl Painter<'_> {
         self.text(text.as_str(), r, font, rgb);
     }
     pub fn curved_text(&self, value: &str, curve: &TextCurve, font: Font, rgb: [u8; 3]) {
-        let advance = |character: char| {
-            let index = (character as usize)
-                .checked_sub(32)
-                .filter(|&index| index < 95)
-                .unwrap_or((b'?' - 32) as usize);
-            self.advances[font.index()][index]
-        };
+        let advance = |character| self.advance(character, font);
         let width: f32 = value.chars().map(advance).sum();
         if width <= 0.0 {
             return;
@@ -726,7 +762,7 @@ impl Painter<'_> {
             let (point, angle) = curve.position(distance + width * scale / 2.0);
             let centre = (point.X, point.Y);
             self.rotated(centre, angle, |p| {
-                p.scaled(centre, scale, |p| {
+                p.stretched(centre, (scale, 1.0), |p| {
                     let mut buffer = [0; 4];
                     p.text(
                         character.encode_utf8(&mut buffer),
@@ -759,19 +795,14 @@ impl Painter<'_> {
         self.curved_text(text.as_str(), curve, font, rgb);
     }
     pub fn curved_text_ellipsized(&self, value: &str, curve: &TextCurve, font: Font, rgb: [u8; 3]) {
-        let advance = |character: char| {
-            let index = (character as usize)
-                .checked_sub(32)
-                .filter(|&index| index < 95)
-                .unwrap_or((b'?' - 32) as usize);
-            self.advances[font.index()][index]
-        };
-        if value.chars().map(advance).sum::<f32>() <= curve.length() {
+        let advance = |character| self.advance(character, font);
+        let available = curve.length() / MIN_CURVED_TEXT_WIDTH_SCALE;
+        if value.chars().map(advance).sum::<f32>() <= available {
             self.curved_text(value, curve, font, rgb);
             return;
         }
-        // Keep the type size; long driver names give way to an ellipsis.
-        let available = curve.length() - 3.0 * advance('.');
+        // Keep readable letter height; abbreviate after modest width fitting.
+        let available = available - 3.0 * advance('.');
         let mut width = 0.0;
         let mut text = TextBuffer {
             bytes: [0; 192],

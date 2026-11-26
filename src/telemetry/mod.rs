@@ -3,14 +3,16 @@ pub mod demo;
 mod gaps;
 pub mod protocol;
 pub mod state;
+mod time_trial;
 
 pub use alerts::{ALERT_TTL, RaceAlert};
 pub use gaps::{GapReading, GapTrend};
 pub use protocol::{
-    Aero, CarGap, CarStatus, CarTelemetry, Damage, Header, LapData, LapHistory, Packet, ParseError,
-    Participants, RaceControl, SessionData, parse,
+    Aero, CarGap, CarStatus, CarTelemetry, Damage, Header, LapData, LapHistory, LapTiming, Packet,
+    ParseError, Participants, RaceControl, SessionData, parse,
 };
 pub use state::{Connection, Snapshot, TelemetryState, Timed};
+pub use time_trial::TimeTrialReading;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapacitySource {
